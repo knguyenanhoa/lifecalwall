@@ -1,16 +1,7 @@
 # Life Calendar Wallpaper
 
-A live desktop wallpaper that renders a **life calendar** — a grid where each cell represents one week of your life. Elapsed weeks are shaded; future weeks are dim. Thirty-year periods use distinct colours so major life phases are immediately visible.
+A live desktop wallpaper that renders a **life calendar** — a grid where each cell represents one week of your life. Elapsed weeks are shaded; future weeks are dim. Thirty-year periods use distinct colours so major life phases are immediately visible. If you liked this, ![buy me a coffee!](https://ko-fi.com/knguyenanhoa)
 
-```
- year →  0          30          60          90
-week ↓  ┌──────────┬──────────┬───────────┐
-  1     │ ▓▓▓▓▓▓▓▓ │ ░░░░░░░░ │ ·········  │
-  2     │ ▓▓▓▓▓▓▓▓ │ ░░░░░░░░ │ ·········  │
-  …     │   red    │   blue   │   green    │
- 52     └──────────┴──────────┴───────────┘
-```
-## Screenshot
 ![Application Screenshot](screenshot.png)
 
 ## Requirements
