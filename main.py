@@ -30,14 +30,53 @@ from renderer import render
 from wallpaper import render_and_set
 
 # ---------------------------------------------------------------------------
-# Logging
+# Logging — rotating file handler, managed entirely within this process.
+# Max 500 KB per file, keeps 3 backups → ~2 MB cap total.
+# Stops automatically when the process exits; no external tools needed.
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+LOG_DIR      = os.path.expanduser("~/.lifecal/logs")
+LOG_MAX_BYTES   = 500_000   # 500 KB per file
+LOG_BACKUP_COUNT = 3        # keep stderr.log + stderr.log.1 + .2 + .3
+
+
+def _setup_logging() -> None:
+    """
+    Configure the root logger with:
+      - A RotatingFileHandler → ~/.lifecal/logs/lifecal.log
+      - A StreamHandler → stderr (visible when running manually in a terminal)
+
+    The RotatingFileHandler rolls over at LOG_MAX_BYTES and keeps
+    LOG_BACKUP_COUNT old files, so the total log footprint is bounded at
+    (LOG_BACKUP_COUNT + 1) * LOG_MAX_BYTES ≈ 2 MB.
+    """
+    import logging.handlers
+
+    os.makedirs(LOG_DIR, exist_ok=True)
+
+    fmt     = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    root    = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    # Rotating file
+    fh = logging.handlers.RotatingFileHandler(
+        os.path.join(LOG_DIR, "lifecal.log"),
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+    # Console (useful when running manually; silenced by launchd redirection)
+    sh = logging.StreamHandler(sys.stderr)
+    sh.setFormatter(fmt)
+    root.addHandler(sh)
+
+
 log = logging.getLogger("lifecal")
 
 # ---------------------------------------------------------------------------
@@ -279,6 +318,8 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     global _current_settings
+
+    _setup_logging()
 
     args = _parse_args()
 

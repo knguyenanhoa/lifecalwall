@@ -38,8 +38,9 @@ if [[ "$(uname)" == "Darwin" ]]; then
 
     PYTHON_BIN="$VENV_DIR/bin/python3"
     MAIN_PY="$REPO_DIR/main.py"
-    LOG_DIR="$HOME/.lifecal/logs"
-    mkdir -p "$LOG_DIR"
+
+    # Log dir is still created so the Python rotating handler can write into it
+    mkdir -p "$HOME/.lifecal/logs"
 
     cat > "$PLIST_PATH" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -55,8 +56,6 @@ if [[ "$(uname)" == "Darwin" ]]; then
     </array>
     <key>RunAtLoad</key>         <true/>
     <key>KeepAlive</key>         <true/>
-    <key>StandardOutPath</key>   <string>$LOG_DIR/stdout.log</string>
-    <key>StandardErrorPath</key> <string>$LOG_DIR/stderr.log</string>
     <key>WorkingDirectory</key>  <string>$REPO_DIR</string>
     <!-- Allow the process to show a menu-bar icon and interact with the GUI -->
     <key>ProcessType</key>       <string>Interactive</string>
@@ -79,7 +78,7 @@ PLIST
 
     echo ""
     echo "✓ Installed! Life Calendar is now running."
-    echo "  Logs : $LOG_DIR/"
+    echo "  Logs : $HOME/.lifecal/logs/lifecal.log (rotated, ~2 MB cap)"
     echo "  Plist: $PLIST_PATH"
     echo ""
     echo "  To open settings:"
