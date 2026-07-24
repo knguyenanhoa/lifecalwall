@@ -145,6 +145,11 @@ def _run_rumps_app() -> None:
             self._last_minute: int = -1
             self._last_config_mtime: float = 0.0
 
+            # Register NSWorkspace notification observers so we can
+            # re-render immediately on screen wake and Space switch.
+            self._observers = []
+            self._register_system_observers()
+
             # Kick off an immediate render on startup
             self._do_tick(None)
 
@@ -153,6 +158,62 @@ def _run_rumps_app() -> None:
             #   - checks if config file changed (re-render for new settings)
             self._timer = rumps.Timer(self._do_tick, 15)
             self._timer.start()
+
+        # ------------------------------------------------------------------
+
+        def _register_system_observers(self) -> None:
+            """
+            Subscribe to two NSWorkspace notifications:
+
+            NSWorkspaceScreensDidWakeNotification
+                Fired when the display wakes from sleep.  We re-render so the
+                wallpaper is fresh and the live clock is correct.
+
+            NSWorkspaceActiveSpaceDidChangeNotification
+                Fired whenever the user switches to a different Mission Control
+                Space / desktop.  We re-render so every Space shows the
+                current wallpaper (macOS resets the wallpaper per-space on
+                wake and space-switch in some configurations).
+            """
+            try:
+                from AppKit import NSWorkspace                    # type: ignore
+                from Foundation import NSNotificationCenter       # type: ignore
+
+                ws_nc = NSWorkspace.sharedWorkspace().notificationCenter()
+
+                for notification_name in (
+                    "NSWorkspaceScreensDidWakeNotification",
+                    "NSWorkspaceActiveSpaceDidChangeNotification",
+                ):
+                    observer = ws_nc.addObserverForName_object_queue_usingBlock_(
+                        notification_name,
+                        None,   # observe from any object
+                        None,   # deliver on the posting thread (main run loop)
+                        self._on_system_event,
+                    )
+                    self._observers.append((ws_nc, observer))
+                    log.info("Registered observer for %s", notification_name)
+
+            except Exception as exc:
+                log.warning("Could not register system observers: %s", exc)
+
+        def _on_system_event(self, notification) -> None:
+            """Called on screen wake or Space switch — trigger an immediate render."""
+            name = getattr(notification, "name", lambda: str(notification))
+            name = name() if callable(name) else str(name)
+            log.info("System event: %s — re-rendering.", name)
+            # Reset the minute tracker so _do_tick also fires a render on the
+            # next tick even if the minute hasn't changed.
+            self._last_minute = -1
+            do_render()
+
+        def _deregister_system_observers(self) -> None:
+            for nc, observer in self._observers:
+                try:
+                    nc.removeObserver_(observer)
+                except Exception:
+                    pass
+            self._observers.clear()
 
         # ------------------------------------------------------------------
 
@@ -191,6 +252,7 @@ def _run_rumps_app() -> None:
             do_render()
 
         def quit_app(self, _sender) -> None:
+            self._deregister_system_observers()
             rumps.quit_application()
 
     LifeCalApp().run()
