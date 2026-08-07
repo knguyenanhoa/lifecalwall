@@ -146,21 +146,33 @@ def render(settings: Settings, today: Optional[date] = None,
     label_font      = _resolve_font(label_font_size)
     stat_font       = _resolve_font(stat_font_size)
 
-    # Week-column geometry ----------------------------------------------------
+    # Layout split: top 80% of screen for life calendar + week tracker,
+    # bottom 20% for stats. Zones are calculated from full screen height
+    # (no outer margins — they stick to screen edges as invisible guides).
+    TOP_FRACTION = 0.80
+    top_zone_y    = 0
+    top_zone_h    = int(canvas_h * TOP_FRACTION)
+    bottom_zone_y = top_zone_h
+    bottom_zone_h = canvas_h - top_zone_h
+
+    # Inner padding within each zone so content doesn't stick to edges
+    inner_pad = 40
+
+    # Week-column geometry (lives inside the top zone with inner padding) ------
     wcol_w = max(WEEK_COL_MIN_W, min(WEEK_COL_MAX_W,
                                      int(settings.padding_left * 0.30)))
     wcol_x = WEEK_COL_LEFT_MARGIN
-    wcol_y = settings.padding_top
-    wcol_h = canvas_h - settings.padding_top - settings.padding_bottom
+    wcol_y = top_zone_y + inner_pad
+    wcol_h = top_zone_h - 2 * inner_pad
 
     # Width of the day-name labels that sit to the right of the bar
     day_label_w = label_font_size * 3 + 8   # "Wed" ~ 3 chars
 
     # Grid area starts after: left-margin + bar + day-labels + gap
     grid_area_x = wcol_x + wcol_w + day_label_w + WEEK_COL_TO_GRID_GAP
-    grid_area_y = settings.padding_top
-    grid_area_w = canvas_w - grid_area_x - settings.padding_right
-    grid_area_h = canvas_h - settings.padding_top - settings.padding_bottom
+    grid_area_y = top_zone_y + inner_pad
+    grid_area_w = canvas_w - grid_area_x - inner_pad
+    grid_area_h = top_zone_h - 2 * inner_pad
 
     # Space for tick labels
     x_tick_h  = label_font_size + 4 if settings.show_year_labels else 0
@@ -262,8 +274,8 @@ def render(settings: Settings, today: Optional[date] = None,
     _draw_week_column(draw, wcol_x, wcol_y, wcol_w, wcol_h,
                       now, theme, label_font)
 
-    # Stats + live indicator --------------------------------------------------
-    _draw_stats_and_live(draw, canvas_w, canvas_h,
+    # Stats + live indicator (bottom zone) ---------------------------------------
+    _draw_stats_and_live(draw, canvas_w, bottom_zone_y, bottom_zone_h,
                          elapsed, total_weeks, now, theme,
                          stat_font, label_font_size)
 
@@ -332,7 +344,7 @@ def _draw_week_column(
 
 def _draw_stats_and_live(
     draw: ImageDraw.ImageDraw,
-    canvas_w: int, canvas_h: int,
+    canvas_w: int, zone_y: int, zone_h: int,
     elapsed: int, total_weeks: int,
     now: datetime,
     theme: Theme,
@@ -340,7 +352,6 @@ def _draw_stats_and_live(
     base_font_size: int,
 ) -> None:
     live_font = _resolve_font(max(9, base_font_size - 1))
-    margin    = 18
     line_gap  = 6
 
     live_text = f"● LIVE  ·  updated {now.strftime('%H:%M')}"
@@ -351,9 +362,12 @@ def _draw_stats_and_live(
 
     block_w = max(live_w, stat_w)
     block_h = stat_h + line_gap + live_h
-    bx      = canvas_w - block_w - margin
-    by      = canvas_h - block_h - margin
-    pad     = 8
+
+    # Position the block at the bottom-right of the bottom zone (with inner padding)
+    margin = 18
+    bx = canvas_w - block_w - margin
+    by = zone_y + zone_h - block_h - margin
+    pad = 10
 
     pill_color = _blend(theme.background, theme.label_color, 0.10)
     draw.rounded_rectangle(
@@ -362,12 +376,13 @@ def _draw_stats_and_live(
     )
 
     # Stat line — right-aligned
-    draw.text((bx + block_w - stat_w, by), stat_text,
+    sx = bx + (block_w - stat_w)
+    draw.text((sx, by), stat_text,
               fill=_blend(theme.label_color, (255, 255, 255), 0.15),
               font=stat_font)
 
-    # Live line — dot in accent colour, rest in label colour
-    lx        = bx + block_w - live_w
+    # Live line — right-aligned
+    lx        = bx + (block_w - live_w)
     ly        = by + stat_h + line_gap
     dot_char  = "● "
     dot_color = _blend(theme.elapsed_period_colors[0], (255, 255, 255), 0.3)
