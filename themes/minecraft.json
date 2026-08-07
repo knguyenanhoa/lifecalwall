@@ -1,0 +1,24 @@
+{
+  "name": "minecraft",
+  "background": [14, 11, 7],
+  "elapsed_period_colors": [
+    [0, 170, 0],
+    [0, 170, 170],
+    [255, 170, 0]
+  ],
+  "elapsed_period_end_colors": [
+    [85, 255, 85],
+    [85, 255, 255],
+    [255, 255, 85]
+  ],
+  "future_period_colors": [
+    [10, 40, 10],
+    [10, 40, 40],
+    [45, 35, 8]
+  ],
+  "border_color": [35, 27, 18],
+  "label_color": [85, 85, 85],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": true
+}
