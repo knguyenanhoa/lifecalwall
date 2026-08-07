@@ -1,0 +1,24 @@
+{
+  "name": "gradient_sapphire",
+  "background": [4, 4, 10],
+  "elapsed_period_colors": [
+    [40, 100, 220],
+    [20, 60, 160],
+    [10, 30, 100]
+  ],
+  "elapsed_period_end_colors": [
+    [80, 160, 255],
+    [40, 120, 220],
+    [20, 60, 140]
+  ],
+  "future_period_colors": [
+    [10, 15, 45],
+    [8, 12, 35],
+    [5, 8, 25]
+  ],
+  "border_color": [5, 8, 25],
+  "label_color": [80, 120, 200],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": true
+}

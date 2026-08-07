@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 from PIL import Image, ImageTk
 
-from config import THEMES, Settings, get_theme, load_settings, save_settings
+from config import Settings, get_theme, list_theme_names, load_settings, save_settings
 from renderer import render
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ class SettingsWindow:
         self._theme_var = tk.StringVar(value=self._settings.theme)
         theme_combo = ttk.Combobox(
             frm, textvariable=self._theme_var,
-            values=list(THEMES.keys()), state="readonly", width=12,
+            values=list_theme_names(), state="readonly", width=20,
         )
         theme_combo.grid(row=2, column=1, sticky="w", pady=4, padx=(8, 0))
         # Explicitly set the displayed value — on some macOS Tk builds the

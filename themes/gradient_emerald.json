@@ -1,0 +1,24 @@
+{
+  "name": "gradient_emerald",
+  "background": [4, 8, 4],
+  "elapsed_period_colors": [
+    [40, 200, 80],
+    [20, 140, 50],
+    [10, 80, 30]
+  ],
+  "elapsed_period_end_colors": [
+    [80, 255, 120],
+    [40, 200, 80],
+    [20, 130, 50]
+  ],
+  "future_period_colors": [
+    [10, 40, 15],
+    [8, 30, 12],
+    [5, 22, 8]
+  ],
+  "border_color": [5, 20, 8],
+  "label_color": [80, 180, 100],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": true
+}

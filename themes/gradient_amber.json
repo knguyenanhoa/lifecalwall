@@ -1,0 +1,24 @@
+{
+  "name": "gradient_amber",
+  "background": [10, 7, 2],
+  "elapsed_period_colors": [
+    [220, 160, 30],
+    [180, 110, 15],
+    [120, 70, 5]
+  ],
+  "elapsed_period_end_colors": [
+    [255, 200, 60],
+    [220, 150, 30],
+    [160, 100, 15]
+  ],
+  "future_period_colors": [
+    [40, 30, 8],
+    [32, 24, 6],
+    [22, 16, 4]
+  ],
+  "border_color": [25, 18, 5],
+  "label_color": [200, 160, 70],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": true
+}

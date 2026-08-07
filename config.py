@@ -1,11 +1,16 @@
 """
-config.py — User settings and theme definitions for the life calendar wallpaper.
+config.py — User settings and theme loading for the life calendar wallpaper.
+
+Themes are loaded from JSON files in the themes/ directory (relative to this
+file). Each .json file defines one theme. If a requested theme is not found,
+the fallback is "dark".
 """
 
 import json
 import os
-from dataclasses import dataclass, field, asdict
-from typing import Dict, Tuple
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -13,6 +18,9 @@ from typing import Dict, Tuple
 
 CONFIG_DIR = os.path.expanduser("~/.lifecal")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+
+# Theme directory — lives alongside the source code
+THEMES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "themes")
 
 # ---------------------------------------------------------------------------
 # Grid constants — change these to reshape the calendar
@@ -28,6 +36,9 @@ PERIOD_YEARS = 30
 # Theme definition
 # ---------------------------------------------------------------------------
 
+FALLBACK_THEME_NAME = "dark"
+
+
 @dataclass
 class Theme:
     name: str
@@ -41,9 +52,9 @@ class Theme:
         Tuple[int, int, int],
         Tuple[int, int, int],
     ] = (
-        (180,  60,  60),   # years  0-29  — warm red
-        ( 60, 140, 180),   # years 30-59  — cool blue
-        ( 80, 180,  90),   # years 60-89  — soft green
+        (180,  60,  60),
+        ( 60, 140, 180),
+        ( 80, 180,  90),
     )
 
     # Future cell colours per 30-year period (empty)
@@ -52,9 +63,9 @@ class Theme:
         Tuple[int, int, int],
         Tuple[int, int, int],
     ] = (
-        ( 60,  25,  25),   # years  0-29
-        ( 20,  45,  65),   # years 30-59
-        ( 25,  55,  30),   # years 60-89
+        ( 60,  25,  25),
+        ( 20,  45,  65),
+        ( 25,  55,  30),
     )
 
     # Cell border / gap colour
@@ -69,14 +80,10 @@ class Theme:
     # Future cell style: "solid" | "outline"
     future_style: str = "solid"
 
-    # Gradient mode: if True, elapsed cells are individually tinted so colour
-    # ramps smoothly from the period's start colour to its end colour across
-    # the columns of that period.  Ignored when elapsed_style == "hatched".
+    # Gradient mode: if True, elapsed cells ramp from start to end colour
     gradient: bool = False
 
-    # Per-period gradient end colours (used only when gradient=True).
-    # Each entry is the colour at the *right* edge of that period's columns;
-    # the left edge uses elapsed_period_colors[i].
+    # Per-period gradient end colours (used only when gradient=True)
     elapsed_period_end_colors: Tuple[
         Tuple[int, int, int],
         Tuple[int, int, int],
@@ -89,76 +96,93 @@ class Theme:
 
 
 # ---------------------------------------------------------------------------
-# Built-in themes
+# Theme loading from JSON files
 # ---------------------------------------------------------------------------
 
-THEMES: Dict[str, Theme] = {
-    "dark": Theme(
-        name="dark",
-    ),
-    "crimson": Theme(
-        name="crimson",
-        background=(8, 4, 4),
-        # Elapsed: three shades of red that deepen across the 30-year periods
-        elapsed_period_colors=(
-            (220,  40,  40),   # years  0-29 — bright red
-            (160,  20,  20),   # years 30-59 — mid crimson
-            ( 90,  10,  10),   # years 60-89 — deep wine
-        ),
-        # Gradient end colours — each period ramps toward a darker/warmer hue
-        elapsed_period_end_colors=(
-            (255, 100,  50),   # 0-29  ramps from bright red → orange-red
-            (200,  50,  10),   # 30-59 ramps from crimson → burnt orange
-            (130,  20,   5),   # 60-89 ramps from wine → almost black-red
-        ),
-        future_period_colors=(
-            ( 45,  10,  10),
-            ( 35,   8,   8),
-            ( 25,   5,   5),
-        ),
-        border_color=(20, 5, 5),
-        label_color=(180, 80, 80),
-        elapsed_style="solid",
-        future_style="solid",
-        gradient=True,
-    ),
-    "light": Theme(
-        name="light",
-        background=(240, 240, 235),
-        elapsed_period_colors=(
-            (200,  70,  70),
-            ( 60, 130, 190),
-            ( 70, 170,  80),
-        ),
-        future_period_colors=(
-            (220, 190, 190),
-            (190, 210, 230),
-            (190, 225, 195),
-        ),
-        border_color=(200, 200, 195),
-        label_color=( 80,  80,  90),
-        elapsed_style="solid",
-        future_style="solid",
-    ),
-    "monochrome": Theme(
-        name="monochrome",
-        background=(15, 15, 15),
-        elapsed_period_colors=(
-            (200, 200, 200),
-            (160, 160, 160),
-            (120, 120, 120),
-        ),
-        future_period_colors=(
-            ( 50,  50,  50),
-            ( 45,  45,  45),
-            ( 40,  40,  40),
-        ),
-        border_color=(30, 30, 30),
-        label_color=(100, 100, 100),
-        elapsed_style="solid",
-        future_style="solid",
-    ),
-}
+def _json_to_theme(data: dict) -> Theme:
+    """
+    Convert a parsed JSON dict into a Theme instance.
+
+    JSON stores colours as [r, g, b] arrays; we convert to tuples.
+    Missing keys fall back to Theme defaults.
+    """
+    defaults = Theme(name=data.get("name", "unknown"))
+
+    def _to_rgb(val, default):
+        if val is None:
+            return default
+        return tuple(val)
+
+    def _to_rgb_triple(val, default):
+        if val is None:
+            return default
+        return tuple(tuple(c) for c in val)
+
+    return Theme(
+        name=data.get("name", defaults.name),
+        background=_to_rgb(data.get("background"), defaults.background),
+        elapsed_period_colors=_to_rgb_triple(
+            data.get("elapsed_period_colors"), defaults.elapsed_period_colors),
+        future_period_colors=_to_rgb_triple(
+            data.get("future_period_colors"), defaults.future_period_colors),
+        border_color=_to_rgb(data.get("border_color"), defaults.border_color),
+        label_color=_to_rgb(data.get("label_color"), defaults.label_color),
+        elapsed_style=data.get("elapsed_style", defaults.elapsed_style),
+        future_style=data.get("future_style", defaults.future_style),
+        gradient=data.get("gradient", defaults.gradient),
+        elapsed_period_end_colors=_to_rgb_triple(
+            data.get("elapsed_period_end_colors"), defaults.elapsed_period_end_colors),
+    )
+
+
+def _load_theme_file(path: str) -> Theme:
+    """Load a single theme JSON file and return a Theme object."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return _json_to_theme(data)
+
+
+def load_all_themes() -> Dict[str, Theme]:
+    """
+    Scan the themes/ directory for .json files and return a dict of
+    theme_name → Theme. If the directory is missing or empty, returns
+    a dict with just the hardcoded fallback theme.
+    """
+    themes: Dict[str, Theme] = {}
+
+    if os.path.isdir(THEMES_DIR):
+        for filename in sorted(os.listdir(THEMES_DIR)):
+            if not filename.endswith(".json"):
+                continue
+            filepath = os.path.join(THEMES_DIR, filename)
+            try:
+                theme = _load_theme_file(filepath)
+                themes[theme.name] = theme
+            except (json.JSONDecodeError, OSError, KeyError, TypeError):
+                # Skip malformed theme files silently
+                continue
+
+    # Ensure the fallback theme always exists
+    if FALLBACK_THEME_NAME not in themes:
+        themes[FALLBACK_THEME_NAME] = Theme(name=FALLBACK_THEME_NAME)
+
+    return themes
+
+
+def list_theme_names() -> List[str]:
+    """Return a sorted list of all available theme names."""
+    return sorted(load_all_themes().keys())
+
+
+# Module-level cache — loaded once on import, can be refreshed with reload_themes()
+THEMES: Dict[str, Theme] = load_all_themes()
+
+
+def reload_themes() -> None:
+    """Re-scan the themes/ directory and refresh the module-level THEMES dict."""
+    global THEMES
+    THEMES = load_all_themes()
+
 
 # ---------------------------------------------------------------------------
 # User settings
@@ -166,20 +190,16 @@ THEMES: Dict[str, Theme] = {
 
 @dataclass
 class Settings:
-    birthday: str = "2000-01-01"          # ISO-8601 date string: "YYYY-MM-DD"
-    theme: str = "crimson"
-    update_interval_seconds: int = 3600   # how often to re-render (default 1 h)
-    # Canvas resolution — set to 0 to auto-detect from display
+    birthday: str = "2000-01-01"
+    theme: str = "gradient_crimson"
+    update_interval_seconds: int = 3600
     canvas_width: int = 0
     canvas_height: int = 0
-    # Padding around the grid (pixels)
     padding_top: int = 80
     padding_bottom: int = 80
     padding_left: int = 80
     padding_right: int = 80
-    # Gap between cells (pixels)
     cell_gap: int = 2
-    # Whether to show year / week labels
     show_year_labels: bool = True
     show_week_labels: bool = True
 
@@ -208,5 +228,9 @@ def save_settings(settings: Settings) -> None:
 
 
 def get_theme(settings: Settings) -> Theme:
-    """Return the Theme object for the current settings, falling back to dark."""
-    return THEMES.get(settings.theme, THEMES["dark"])
+    """
+    Return the Theme for the current settings.
+
+    Falls back to the default theme if the requested theme is not found.
+    """
+    return THEMES.get(settings.theme, THEMES[FALLBACK_THEME_NAME])

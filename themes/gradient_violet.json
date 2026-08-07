@@ -1,0 +1,24 @@
+{
+  "name": "gradient_violet",
+  "background": [8, 4, 10],
+  "elapsed_period_colors": [
+    [160, 40, 220],
+    [110, 20, 160],
+    [60, 10, 100]
+  ],
+  "elapsed_period_end_colors": [
+    [200, 80, 255],
+    [150, 40, 220],
+    [100, 20, 150]
+  ],
+  "future_period_colors": [
+    [30, 10, 42],
+    [24, 8, 34],
+    [16, 5, 24]
+  ],
+  "border_color": [18, 5, 25],
+  "label_color": [160, 80, 200],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": true
+}

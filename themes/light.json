@@ -1,0 +1,24 @@
+{
+  "name": "light",
+  "background": [240, 240, 235],
+  "elapsed_period_colors": [
+    [200, 70, 70],
+    [60, 130, 190],
+    [70, 170, 80]
+  ],
+  "future_period_colors": [
+    [220, 190, 190],
+    [190, 210, 230],
+    [190, 225, 195]
+  ],
+  "border_color": [200, 200, 195],
+  "label_color": [80, 80, 90],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": false,
+  "elapsed_period_end_colors": [
+    [200, 70, 70],
+    [60, 130, 190],
+    [70, 170, 80]
+  ]
+}

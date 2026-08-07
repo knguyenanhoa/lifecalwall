@@ -134,9 +134,16 @@ def _run_rumps_app() -> None:
 
         def __init__(self):
             super().__init__("🗓", quit_button=None)
+
+            self._paused = False
+            self._pause_item = rumps.MenuItem("Pause Updates", callback=self._toggle_pause)
+
             self.menu = [
                 rumps.MenuItem("Open Settings", callback=self.open_settings),
                 rumps.MenuItem("Render Now",    callback=self.render_now),
+                None,
+                self._pause_item,
+                rumps.MenuItem("Restart",       callback=self._restart),
                 None,
                 rumps.MenuItem("Quit",          callback=self.quit_app),
             ]
@@ -199,6 +206,8 @@ def _run_rumps_app() -> None:
 
         def _on_system_event(self, notification) -> None:
             """Called on screen wake or Space switch — trigger an immediate render."""
+            if self._paused:
+                return
             name = getattr(notification, "name", lambda: str(notification))
             name = name() if callable(name) else str(name)
             log.info("System event: %s — re-rendering.", name)
@@ -219,6 +228,9 @@ def _run_rumps_app() -> None:
 
         def _do_tick(self, _sender) -> None:
             global _current_settings
+
+            if self._paused:
+                return
 
             # Check config file for changes
             try:
@@ -250,6 +262,28 @@ def _run_rumps_app() -> None:
 
         def render_now(self, _sender) -> None:
             do_render()
+
+        def _toggle_pause(self, sender) -> None:
+            """Pause or resume automatic wallpaper updates."""
+            self._paused = not self._paused
+            if self._paused:
+                self._timer.stop()
+                sender.title = "Resume Updates"
+                self.title = "🗓⏸"
+                log.info("Updates paused.")
+            else:
+                self._timer.start()
+                sender.title = "Pause Updates"
+                self.title = "🗓"
+                self._last_minute = -1  # force immediate re-render
+                log.info("Updates resumed.")
+
+        def _restart(self, _sender) -> None:
+            """Restart the entire process by re-executing ourselves."""
+            log.info("Restarting…")
+            self._deregister_system_observers()
+            # Re-exec the current process with the same arguments
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
         def quit_app(self, _sender) -> None:
             self._deregister_system_observers()
@@ -361,7 +395,7 @@ def _handle_signal(signum, _frame):
 # ---------------------------------------------------------------------------
 
 def _parse_args() -> argparse.Namespace:
-    from config import THEMES
+    from config import list_theme_names
     parser = argparse.ArgumentParser(description="Life Calendar Wallpaper")
     parser.add_argument("--settings",    action="store_true",
                         help="Open the settings window before starting.")
@@ -369,7 +403,7 @@ def _parse_args() -> argparse.Namespace:
                         help="Render once and exit.")
     parser.add_argument("--birthday",    metavar="YYYY-MM-DD",
                         help="Set birthday and save to config, then exit.")
-    parser.add_argument("--theme",       choices=list(THEMES.keys()),
+    parser.add_argument("--theme",       choices=list_theme_names(),
                         help="Set theme and save to config, then exit.")
     return parser.parse_args()
 

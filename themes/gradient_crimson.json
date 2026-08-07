@@ -1,0 +1,24 @@
+{
+  "name": "gradient_crimson",
+  "background": [8, 4, 4],
+  "elapsed_period_colors": [
+    [220, 40, 40],
+    [160, 20, 20],
+    [90, 10, 10]
+  ],
+  "elapsed_period_end_colors": [
+    [255, 100, 50],
+    [200, 50, 10],
+    [130, 20, 5]
+  ],
+  "future_period_colors": [
+    [45, 10, 10],
+    [35, 8, 8],
+    [25, 5, 5]
+  ],
+  "border_color": [20, 5, 5],
+  "label_color": [180, 80, 80],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": true
+}
