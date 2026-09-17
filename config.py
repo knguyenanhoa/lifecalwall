@@ -10,7 +10,7 @@ import json
 import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -202,6 +202,18 @@ class Settings:
     cell_gap: int = 2
     show_year_labels: bool = True
     show_week_labels: bool = True
+
+    # Weather report (bottom-left of the wallpaper)
+    show_weather: bool = True
+    # Temperature unit: True → Fahrenheit, False → Celsius
+    weather_fahrenheit: bool = False
+    # Location as a place name (e.g. "Ho Chi Minh City"). When blank, the
+    # weather module falls back to DEFAULT_WEATHER_LOCATION.
+    weather_location: str = ""
+    # Cached coordinates for weather_location, filled in by the weather module
+    # after geocoding so we don't re-geocode on every render.
+    weather_latitude: Optional[float] = None
+    weather_longitude: Optional[float] = None
 
 
 def load_settings() -> Settings:

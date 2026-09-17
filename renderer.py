@@ -274,10 +274,15 @@ def render(settings: Settings, today: Optional[date] = None,
     _draw_week_column(draw, wcol_x, wcol_y, wcol_w, wcol_h,
                       now, theme, label_font)
 
-    # Stats + live indicator (bottom zone) ---------------------------------------
+    # Stats + live indicator (bottom-right of the bottom zone) ----------------
     _draw_stats_and_live(draw, canvas_w, bottom_zone_y, bottom_zone_h,
                          elapsed, total_weeks, now, theme,
                          stat_font, label_font_size)
+
+    # Weather report (bottom-left of the bottom zone — opposite the stats) -----
+    if settings.show_weather:
+        _draw_weather(draw, bottom_zone_y, bottom_zone_h,
+                      settings, theme, stat_font, label_font_size)
 
     return img
 
@@ -389,6 +394,115 @@ def _draw_stats_and_live(
     dot_w, _  = _text_size(draw, dot_char, live_font)
     draw.text((lx,          ly), dot_char,                fill=dot_color,        font=live_font)
     draw.text((lx + dot_w,  ly), live_text[len(dot_char):], fill=theme.label_color, font=live_font)
+
+
+# ---------------------------------------------------------------------------
+# Weather report (bottom-left pill)
+# ---------------------------------------------------------------------------
+
+def _format_hour_rain(hour) -> str:
+    """
+    Rain outlook for a single forecast hour.
+
+    Dry hour → "dry"
+    Otherwise → chance plus expected amount when measurable, e.g.
+                "65%  1.4mm"  or just  "20%".
+    """
+    if hour.precip_probability < 15 and hour.precip_amount < 0.1:
+        return "dry"
+    if hour.precip_amount >= 0.1:
+        return f"{hour.precip_probability}%  {hour.precip_amount:.1f}mm"
+    return f"{hour.precip_probability}%"
+
+
+def _draw_weather(
+    draw: ImageDraw.ImageDraw,
+    zone_y: int, zone_h: int,
+    settings: Settings,
+    theme: Theme,
+    stat_font,
+    base_font_size: int,
+) -> None:
+    """
+    Draw the weather block in the bottom-left corner, mirroring the
+    bottom-right stats pill. A header shows the current temperature and
+    location; below it, one row per upcoming hour lists that hour's time,
+    temperature, and rain outlook. If no weather data is available (offline
+    with no cache), nothing is drawn.
+    """
+    # Imported lazily so a missing weather module or network stack can never
+    # prevent the rest of the wallpaper from rendering.
+    try:
+        from weather import get_weather
+        report = get_weather(
+            latitude=settings.weather_latitude,
+            longitude=settings.weather_longitude,
+            location=settings.weather_location,
+            fahrenheit=settings.weather_fahrenheit,
+        )
+    except Exception:
+        report = None
+
+    if report is None:
+        return
+
+    detail_font = _resolve_font(max(9, base_font_size - 1))
+    line_gap = 6
+    row_gap = 4
+    unit = report.temperature_unit
+
+    place = f"  ·  {report.location}" if report.location else ""
+    header_text = f"{report.temperature:.0f}{unit}{place}"
+
+    # Build one row per hour as three aligned columns: time, temperature, rain.
+    rows = [
+        (h.label, f"{h.temperature:.0f}{unit}", _format_hour_rain(h))
+        for h in report.hours
+    ]
+
+    header_w, header_h = _text_size(draw, header_text, stat_font)
+    _, row_h = _text_size(draw, "0:00", detail_font)
+
+    # Column widths so temperatures and rain figures line up across rows.
+    col_gap = 10
+    time_col_w = max((_text_size(draw, r[0], detail_font)[0] for r in rows), default=0)
+    temp_col_w = max((_text_size(draw, r[1], detail_font)[0] for r in rows), default=0)
+    rain_col_w = max((_text_size(draw, r[2], detail_font)[0] for r in rows), default=0)
+    rows_w = time_col_w + col_gap + temp_col_w + col_gap + rain_col_w
+
+    block_w = max(header_w, rows_w)
+    block_h = header_h + line_gap + len(rows) * row_h + max(0, len(rows) - 1) * row_gap
+
+    # Bottom-left of the bottom zone, mirroring the stats pill's margins.
+    margin = 18
+    pad = 10
+    bx = margin
+    by = zone_y + zone_h - block_h - margin
+
+    pill_color = _blend(theme.background, theme.label_color, 0.10)
+    draw.rounded_rectangle(
+        [bx - pad, by - pad, bx + block_w + pad, by + block_h + pad],
+        radius=5, fill=pill_color,
+    )
+
+    # Header line — current temperature + location.
+    draw.text((bx, by), header_text,
+              fill=_blend(theme.label_color, (255, 255, 255), 0.15),
+              font=stat_font)
+
+    # Hourly rows. Rain uses an accent tint when wet, muted when dry.
+    accent = _blend(theme.elapsed_period_colors[1], (255, 255, 255), 0.3)
+    muted = _blend(theme.background, theme.label_color, 0.5)
+    time_x = bx
+    temp_x = bx + time_col_w + col_gap
+    rain_x = temp_x + temp_col_w + col_gap
+    ry = by + header_h + line_gap
+    for time_lbl, temp_lbl, rain_lbl in rows:
+        draw.text((time_x, ry), time_lbl, fill=theme.label_color, font=detail_font)
+        draw.text((temp_x, ry), temp_lbl, fill=theme.label_color, font=detail_font)
+        rain_color = muted if rain_lbl == "dry" else accent
+        draw.text((rain_x, ry), rain_lbl, fill=rain_color, font=detail_font)
+        ry += row_h + row_gap
 
 
 # ---------------------------------------------------------------------------
