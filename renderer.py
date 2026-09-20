@@ -279,10 +279,10 @@ def render(settings: Settings, today: Optional[date] = None,
                          elapsed, total_weeks, now, theme,
                          stat_font, label_font_size)
 
-    # Weather report (bottom-left of the bottom zone — opposite the stats) -----
+    # Weather report (centered in the bottom zone) ----------------------------
     if settings.show_weather:
-        _draw_weather(draw, bottom_zone_y, bottom_zone_h,
-                      settings, theme, stat_font, label_font_size)
+        _draw_weather(draw, canvas_w, bottom_zone_y, bottom_zone_h,
+                      settings, theme, stat_font, label_font_size, today, now)
 
     return img
 
@@ -400,6 +400,124 @@ def _draw_stats_and_live(
 # Weather report (bottom-left pill)
 # ---------------------------------------------------------------------------
 
+def _format_dates(today: date) -> Tuple[str, str]:
+    """
+    Return (gregorian, lunar) date strings for *today*.
+
+    Gregorian is always available. The lunar date uses the Chinese lunar
+    calendar via the `lunardate` package (which the Vietnamese calendar
+    tracks, up to an occasional one-day timezone offset). If that package is
+    unavailable, the lunar string comes back empty so the caller can simply
+    omit it rather than fail.
+    """
+    gregorian = today.strftime("%a, %d %b %Y")
+
+    # Lunar months are numbered 1–12; reuse the Gregorian month abbreviations
+    # so the lunar date reads like "07 Jul" (day 7 of the 7th lunar month).
+    month_abbrev = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    try:
+        from lunardate import LunarDate
+        lunar = LunarDate.from_solar_date(today.year, today.month, today.day)
+        name = month_abbrev[(lunar.month - 1) % 12]
+        leap = "+" if getattr(lunar, "isLeapMonth", False) else ""
+        lunar_str = f"{lunar.day:02d} {name}{leap}"
+    except Exception:
+        lunar_str = ""
+
+    return gregorian, lunar_str
+
+
+def _weather_condition(code: Optional[int]) -> Tuple[str, str]:
+    """
+    Map a WMO weather code to an (icon_key, label) pair. The icon_key selects
+    which vector icon _draw_weather_icon draws; the label is a short caption.
+
+    WMO code groups (per Open-Meteo's documented interpretation):
+      0        clear
+      1–2      mainly clear / partly cloudy
+      3        overcast
+      45,48    fog
+      51–57    drizzle
+      61–67    rain
+      71–77    snow
+      80–82    rain showers
+      85,86    snow showers
+      95–99    thunderstorm
+    """
+    if code is None:
+        return "unknown", ""
+    if code == 0:
+        return "clear", "Clear"
+    if code in (1, 2):
+        return "partly", "Partly cloudy"
+    if code == 3:
+        return "cloudy", "Overcast"
+    if code in (45, 48):
+        return "fog", "Fog"
+    if 51 <= code <= 57:
+        return "rain", "Drizzle"
+    if 61 <= code <= 67:
+        return "rain", "Rain"
+    if 71 <= code <= 77:
+        return "snow", "Snow"
+    if 80 <= code <= 82:
+        return "rain", "Rain showers"
+    if code in (85, 86):
+        return "snow", "Snow showers"
+    if 95 <= code <= 99:
+        return "thunder", "Thunderstorm"
+    return "cloudy", "Cloudy"
+
+
+def _uv_label(uv: float) -> str:
+    """WHO UV-index exposure band for a UV value."""
+    if uv < 3:
+        return "Low"
+    if uv < 6:
+        return "Moderate"
+    if uv < 8:
+        return "High"
+    if uv < 11:
+        return "Very high"
+    return "Extreme"
+
+
+def _next_solar_event(report, now: datetime) -> Optional[Tuple[str, str]]:
+    """
+    Pick the next sunrise/sunset to show, as (label, "HH:MM"):
+
+      • before today's sunrise → today's sunrise
+      • between sunrise and sunset → today's sunset
+      • after today's sunset → tomorrow's sunrise
+
+    Returns None if the needed sun times are missing (e.g. offline with an old
+    cache), so the caller can omit the line.
+    """
+    def _parse(iso: str) -> Optional[datetime]:
+        if not iso:
+            return None
+        try:
+            return datetime.fromisoformat(iso)
+        except ValueError:
+            return None
+
+    sunrise = _parse(report.sunrise_today)
+    sunset = _parse(report.sunset_today)
+    next_sunrise = _parse(report.sunrise_tomorrow)
+
+    if sunrise and now < sunrise:
+        return "Sunrise", sunrise.strftime("%H:%M")
+    if sunset and now < sunset:
+        return "Sunset", sunset.strftime("%H:%M")
+    if next_sunrise:
+        return "Sunrise", next_sunrise.strftime("%H:%M")
+    # Fall back to today's sunrise if tomorrow's is unavailable.
+    if sunrise:
+        return "Sunrise", sunrise.strftime("%H:%M")
+    return None
+
+
 def _format_hour_rain(hour) -> str:
     """
     Rain outlook for a single forecast hour.
@@ -415,20 +533,166 @@ def _format_hour_rain(hour) -> str:
     return f"{hour.precip_probability}%"
 
 
+def _format_gmt_offset(utc_offset_seconds: Optional[int]) -> str:
+    """
+    Format a UTC offset in seconds as a compact "±H[:MM]" string, or ""
+    when the offset is unknown. E.g. 25200 → "+7", 19800 → "+5:30".
+    """
+    if utc_offset_seconds is None:
+        return ""
+    total_minutes = utc_offset_seconds // 60
+    sign = "+" if total_minutes >= 0 else "-"
+    hours, minutes = divmod(abs(total_minutes), 60)
+    return f"{sign}{hours}:{minutes:02d}" if minutes else f"{sign}{hours}"
+
+
+# Brightness floor for the ramp's dark end: even a 0%/minimum value keeps
+# roughly this fraction of the full brightness so it stays clearly readable
+# rather than fading into the background.
+_RAMP_MIN_BRIGHTNESS = 0.55
+
+
+def _ramp_color(theme: Theme, t: float) -> Tuple[int, int, int]:
+    """
+    Colour along a dark→light ramp keyed by *t* in [0, 1], used to encode
+    magnitude (rain chance, relative temperature) as brightness. The dark end
+    is floored at _RAMP_MIN_BRIGHTNESS so t=0 is dim but still legible; t=1 is
+    near-white.
+    """
+    t = 0.0 if t < 0 else 1.0 if t > 1 else t
+    top = _blend(theme.label_color, (255, 255, 255), 0.4)
+    # Map t into [floor, 1] then blend from background toward the bright top,
+    # so the minimum never drops below the readable floor.
+    brightness = _RAMP_MIN_BRIGHTNESS + (1.0 - _RAMP_MIN_BRIGHTNESS) * t
+    return _blend(theme.background, top, brightness)
+
+
+def _draw_crescent_moon(
+    draw: ImageDraw.ImageDraw,
+    x: int, y: int, radius: int,
+    color: Tuple[int, int, int],
+    bg: Tuple[int, int, int],
+) -> None:
+    """
+    Draw a small crescent moon with its bounding box's top-left at (x, y).
+
+    The system fallback fonts have no moon glyph (they render a tofu box), so
+    the moon is drawn as vectors: a filled disc with an overlapping
+    background-coloured disc bitten out of it to leave a crescent.
+    """
+    cx, cy = x + radius, y + radius
+    draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=color)
+    # Offset the "bite" toward the upper-right for a waxing-crescent look.
+    bite_dx = radius * 0.6
+    draw.ellipse(
+        [cx - radius + bite_dx, cy - radius - radius * 0.15,
+         cx + radius + bite_dx, cy + radius - radius * 0.15],
+        fill=bg,
+    )
+
+
+def _draw_sun(draw, x, y, size, color) -> None:
+    """A sun: a filled disc with eight short rays, fit within a size box."""
+    cx, cy = x + size / 2, y + size / 2
+    r = size * 0.24
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
+    ray_in = r * 1.35
+    ray_out = size * 0.5
+    for i in range(8):
+        a = i * (math.pi / 4)
+        dx, dy = math.cos(a), math.sin(a)
+        draw.line([(cx + dx * ray_in, cy + dy * ray_in),
+                   (cx + dx * ray_out, cy + dy * ray_out)],
+                  fill=color, width=max(1, size // 16))
+
+
+def _draw_cloud(draw, x, y, w, h, color) -> None:
+    """A simple cloud built from overlapping lobes on a flat base."""
+    base_top = y + h * 0.55
+    draw.rounded_rectangle([x, base_top, x + w, y + h], radius=h * 0.22, fill=color)
+    draw.ellipse([x + w * 0.05, y + h * 0.30, x + w * 0.50, y + h * 0.80], fill=color)
+    draw.ellipse([x + w * 0.35, y + h * 0.10, x + w * 0.80, y + h * 0.72], fill=color)
+    draw.ellipse([x + w * 0.55, y + h * 0.32, x + w * 0.98, y + h * 0.82], fill=color)
+
+
+def _draw_weather_icon(draw, key: str, x: int, y: int, size: int,
+                       color, accent, bg) -> None:
+    """
+    Draw a small vector weather icon for *key* inside a size×size box at (x, y).
+    The system fallback fonts lack weather glyphs, so conditions are drawn as
+    shapes (same approach as the crescent moon).
+    """
+    if key == "clear":
+        _draw_sun(draw, x, y, size, color)
+        return
+
+    if key == "partly":
+        # Small sun peeking behind a cloud.
+        _draw_sun(draw, x, int(y - size * 0.05), int(size * 0.7), color)
+        _draw_cloud(draw, x + size * 0.15, y + size * 0.32, size * 0.85, size * 0.5, color)
+        return
+
+    # The remaining icons all sit under a cloud.
+    cloud_w, cloud_h = size, size * 0.55
+    cloud_y = y + size * 0.05
+    _draw_cloud(draw, x, cloud_y, cloud_w, cloud_h, color)
+    below_y = cloud_y + cloud_h + size * 0.06
+    cx = x + size / 2
+
+    if key == "rain":
+        for i in (-1, 0, 1):
+            dx = cx + i * size * 0.22
+            draw.line([(dx, below_y), (dx - size * 0.08, below_y + size * 0.22)],
+                      fill=accent, width=max(1, size // 14))
+    elif key == "snow":
+        r = max(1, size // 16)
+        for i in (-1, 0, 1):
+            dx = cx + i * size * 0.22
+            dy = below_y + size * 0.10
+            draw.ellipse([dx - r, dy - r, dx + r, dy + r], fill=accent)
+    elif key == "thunder":
+        s = size
+        bolt = [
+            (cx + s * 0.02, below_y),
+            (cx - s * 0.14, below_y + s * 0.20),
+            (cx - s * 0.02, below_y + s * 0.20),
+            (cx - s * 0.10, below_y + s * 0.36),
+            (cx + s * 0.16, below_y + s * 0.12),
+            (cx + s * 0.02, below_y + s * 0.12),
+        ]
+        draw.polygon(bolt, fill=accent)
+    elif key == "fog":
+        for i in range(3):
+            fy = below_y + i * size * 0.10
+            draw.line([(x + size * 0.08, fy), (x + size * 0.92, fy)],
+                      fill=accent, width=max(1, size // 16))
+    # "cloudy" / "unknown": the cloud alone is enough.
+
+
 def _draw_weather(
     draw: ImageDraw.ImageDraw,
-    zone_y: int, zone_h: int,
+    canvas_w: int, zone_y: int, zone_h: int,
     settings: Settings,
     theme: Theme,
     stat_font,
     base_font_size: int,
+    today: date,
+    now: datetime,
 ) -> None:
     """
-    Draw the weather block in the bottom-left corner, mirroring the
-    bottom-right stats pill. A header shows the current temperature and
-    location; below it, one row per upcoming hour lists that hour's time,
-    temperature, and rain outlook. If no weather data is available (offline
-    with no cache), nothing is drawn.
+    Draw the weather block centered in the bottom zone. Layout:
+
+      • a full-width date line on top — Gregorian date plus a drawn crescent
+        moon and the lunar "DD Mon" date,
+      • a two-column body below it: the left column stacks the large current
+        temperature over the low/high, location, and the next sunrise/sunset;
+        the right column lists one row per upcoming hour (time, temperature,
+        rain outlook).
+
+    Splitting the body into columns widens the lower half so the block reads
+    as balanced rather than top-heavy.
+
+    If no weather data is available (offline with no cache), nothing is drawn.
     """
     # Imported lazily so a missing weather module or network stack can never
     # prevent the rest of the wallpaper from rendering.
@@ -447,62 +711,212 @@ def _draw_weather(
         return
 
     detail_font = _resolve_font(max(9, base_font_size - 1))
-    line_gap = 6
-    row_gap = 4
+    big_temp_font = _resolve_font(max(18, base_font_size * 2))
+
+    # Vertical rhythm — roomier than before so lines don't feel packed.
+    line_gap = base_font_size          # gap between stacked lines
+    row_gap = max(6, base_font_size // 2)  # gap between hourly rows
+    column_gap = base_font_size * 4    # gap between the temp and forecast columns
+
     unit = report.temperature_unit
+    # Degrees without the unit letter, for the compact low/high pair.
+    deg = unit[0] if unit else "°"
 
-    place = f"  ·  {report.location}" if report.location else ""
-    header_text = f"{report.temperature:.0f}{unit}{place}"
+    # Date line: Gregorian text, then a drawn moon + lunar "DD Mon" -----------
+    gregorian, lunar = _format_dates(today)
+    moon_r = max(4, base_font_size // 2)   # crescent radius
+    moon_gap = 5                           # space between moon and lunar text
 
-    # Build one row per hour as three aligned columns: time, temperature, rain.
+    # Left column — big current temperature, then low/high, then location.
+    temp_text = f"{report.temperature:.0f}{unit}"
+    lowhigh_text = ""
+    low_text = high_text = lh_sep = ""
+    if report.temp_low is not None and report.temp_high is not None:
+        low_text = f"L {report.temp_low:.0f}{deg}"
+        high_text = f"H {report.temp_high:.0f}{deg}"
+        lh_sep = "    "
+        lowhigh_text = f"{low_text}{lh_sep}{high_text}"
+    place_text = report.location or ""
+    gmt = _format_gmt_offset(report.utc_offset_seconds)
+    if place_text and gmt:
+        place_text = f"{place_text} ({gmt})"
+    elif gmt:
+        place_text = f"({gmt})"
+
+    # Next solar event (sunrise before dawn, sunset by day, tomorrow's sunrise
+    # after dusk).
+    solar = _next_solar_event(report, now)
+    solar_text = f"{solar[0]} {solar[1]}" if solar else ""
+
+    # Current condition (icon + label) and UV. The condition label and UV
+    # share one line to keep the left column from growing too tall.
+    icon_key, condition_label = _weather_condition(report.weather_code)
+    icon_size = max(20, base_font_size * 2)   # drawn above the temperature
+    uv_value = report.uv_index_max if report.uv_index_max is not None else report.uv_index
+    uv_text = f"UV {uv_value:.0f} {_uv_label(uv_value)}" if uv_value is not None else ""
+    info_text = "  ·  ".join(t for t in (condition_label, uv_text) if t)
+
+    # Right column — one row per hour: time, temperature, rain.
     rows = [
         (h.label, f"{h.temperature:.0f}{unit}", _format_hour_rain(h))
         for h in report.hours
     ]
 
-    header_w, header_h = _text_size(draw, header_text, stat_font)
+    # ---- Measure everything -------------------------------------------------
+    greg_w, date_h = _text_size(draw, gregorian, detail_font)
+    lunar_w, lunar_h = _text_size(draw, lunar, detail_font) if lunar else (0, 0)
+    date_sep = "    " if lunar else ""
+    date_sep_w, _ = _text_size(draw, date_sep, detail_font)
+    moon_w = (2 * moon_r + moon_gap) if lunar else 0
+    date_line_w = greg_w + date_sep_w + moon_w + lunar_w
+    date_line_h = max(date_h, lunar_h, 2 * moon_r if lunar else 0)
+
+    temp_w, temp_h = _text_size(draw, temp_text, big_temp_font)
+    lowhigh_w, lowhigh_h = _text_size(draw, lowhigh_text, detail_font) if lowhigh_text else (0, 0)
+    place_w, place_h = _text_size(draw, place_text, detail_font) if place_text else (0, 0)
+    solar_w, solar_h = _text_size(draw, solar_text, detail_font) if solar_text else (0, 0)
+    info_w, info_h = _text_size(draw, info_text, detail_font) if info_text else (0, 0)
+    has_icon = icon_key != "unknown"
     _, row_h = _text_size(draw, "0:00", detail_font)
 
-    # Column widths so temperatures and rain figures line up across rows.
+    # Left column geometry — condition icon on top, then the temperature stack,
+    # low/high, the condition+UV info line, location, and the next sun event.
+    left_w = max(temp_w, lowhigh_w, place_w, solar_w, info_w, icon_size if has_icon else 0)
+    left_h = temp_h
+    if has_icon:
+        left_h += icon_size + line_gap // 2
+    if lowhigh_text:
+        left_h += line_gap // 2 + lowhigh_h
+    if info_text:
+        left_h += line_gap // 2 + info_h
+    if place_text:
+        left_h += line_gap // 2 + place_h
+    if solar_text:
+        left_h += line_gap // 2 + solar_h
+
+    # Right column (forecast table) geometry. A small condition icon leads
+    # each row, followed by the time, temperature, and rain columns.
     col_gap = 10
+    hour_icon_size = row_h + base_font_size // 2
     time_col_w = max((_text_size(draw, r[0], detail_font)[0] for r in rows), default=0)
     temp_col_w = max((_text_size(draw, r[1], detail_font)[0] for r in rows), default=0)
     rain_col_w = max((_text_size(draw, r[2], detail_font)[0] for r in rows), default=0)
-    rows_w = time_col_w + col_gap + temp_col_w + col_gap + rain_col_w
+    right_w = (hour_icon_size + col_gap + time_col_w + col_gap
+               + temp_col_w + col_gap + rain_col_w)
+    # Rows are as tall as the icon so it isn't clipped.
+    hour_row_h = max(row_h, hour_icon_size)
+    right_h = len(rows) * hour_row_h + max(0, len(rows) - 1) * row_gap
 
-    block_w = max(header_w, rows_w)
-    block_h = header_h + line_gap + len(rows) * row_h + max(0, len(rows) - 1) * row_gap
+    # The two columns sit side by side; the body is as tall as the taller one.
+    body_w = left_w + column_gap + right_w
+    body_h = max(left_h, right_h)
 
-    # Bottom-left of the bottom zone, mirroring the stats pill's margins.
+    block_w = max(date_line_w, body_w)
+    block_h = date_line_h + line_gap + body_h
+
+    # Center the block horizontally in the bottom zone; keep it near the
+    # bottom edge like the stats pill on the right.
     margin = 18
-    pad = 10
-    bx = margin
+    pad = 14
+    bx = (canvas_w - block_w) // 2
     by = zone_y + zone_h - block_h - margin
 
     pill_color = _blend(theme.background, theme.label_color, 0.10)
     draw.rounded_rectangle(
         [bx - pad, by - pad, bx + block_w + pad, by + block_h + pad],
-        radius=5, fill=pill_color,
+        radius=6, fill=pill_color,
     )
 
-    # Header line — current temperature + location.
-    draw.text((bx, by), header_text,
-              fill=_blend(theme.label_color, (255, 255, 255), 0.15),
-              font=stat_font)
+    bright = _blend(theme.label_color, (255, 255, 255), 0.15)
 
-    # Hourly rows. Rain uses an accent tint when wet, muted when dry.
-    accent = _blend(theme.elapsed_period_colors[1], (255, 255, 255), 0.3)
-    muted = _blend(theme.background, theme.label_color, 0.5)
-    time_x = bx
-    temp_x = bx + time_col_w + col_gap
+    def _text_at(text, font, x, y, fill):
+        draw.text((x, y), text, fill=fill, font=font)
+
+    def _centered_in(text, font, col_x, col_w, y, fill):
+        w, _ = _text_size(draw, text, font)
+        _text_at(text, font, col_x + (col_w - w) // 2, y, fill)
+
+    # ---- Date line (full width, centered) -----------------------------------
+    dx = bx + (block_w - date_line_w) // 2
+    _text_at(gregorian, detail_font, dx, by + (date_line_h - date_h) // 2,
+             theme.label_color)
+    if lunar:
+        moon_x = dx + greg_w + date_sep_w
+        _draw_crescent_moon(draw, moon_x, by + (date_line_h - 2 * moon_r) // 2,
+                            moon_r, bright, pill_color)
+        lunar_x = moon_x + 2 * moon_r + moon_gap
+        _text_at(lunar, detail_font, lunar_x, by + (date_line_h - lunar_h) // 2,
+                 theme.label_color)
+
+    # ---- Body: two columns, each vertically centered within the body --------
+    body_y = by + date_line_h + line_gap
+    left_x = bx + (block_w - body_w) // 2
+    right_x = left_x + left_w + column_gap
+
+    # Left column — condition icon, then temperature stack.
+    ly = body_y + (body_h - left_h) // 2
+    icon_accent = _blend(theme.elapsed_period_colors[1], (255, 255, 255), 0.3)
+    if has_icon:
+        _draw_weather_icon(draw, icon_key,
+                           left_x + (left_w - icon_size) // 2, ly, icon_size,
+                           bright, icon_accent, pill_color)
+        ly += icon_size + line_gap // 2
+    _centered_in(temp_text, big_temp_font, left_x, left_w, ly, bright)
+    ly += temp_h
+    if lowhigh_text:
+        ly += line_gap // 2
+        # Colour the low/high with the same ramp used for the hourly temps:
+        # the low sits at the dark end, the high at the light end, so the two
+        # anchor what "darkest" and "lightest" mean for the column.
+        low_w, _ = _text_size(draw, low_text, detail_font)
+        sep_w, _ = _text_size(draw, lh_sep, detail_font)
+        group_w, _ = _text_size(draw, lowhigh_text, detail_font)
+        gx = left_x + (left_w - group_w) // 2
+        _text_at(low_text, detail_font, gx, ly, _ramp_color(theme, 0.0))
+        _text_at(high_text, detail_font, gx + low_w + sep_w, ly, _ramp_color(theme, 1.0))
+        ly += lowhigh_h
+    if info_text:
+        ly += line_gap // 2
+        _centered_in(info_text, detail_font, left_x, left_w, ly, theme.label_color)
+        ly += info_h
+    if place_text:
+        ly += line_gap // 2
+        _centered_in(place_text, detail_font, left_x, left_w, ly, theme.label_color)
+        ly += place_h
+    if solar_text:
+        ly += line_gap // 2
+        _centered_in(solar_text, detail_font, left_x, left_w, ly, bright)
+
+    # Right column — forecast table. Temperature and rain figures are tinted
+    # by brightness: hotter/wetter reads lighter, cooler/drier reads darker.
+    #   • rain:  0% (darkest) → 100% (lightest)
+    #   • temp:  day low (darkest) → day high (lightest)
+    # The temperature reference range prefers the day's forecast low/high, and
+    # falls back to the spread across the displayed hours when those are absent.
+    hourly_temps = [h.temperature for h in report.hours]
+    t_min = report.temp_low if report.temp_low is not None else (min(hourly_temps) if hourly_temps else 0.0)
+    t_max = report.temp_high if report.temp_high is not None else (max(hourly_temps) if hourly_temps else 1.0)
+    t_span = (t_max - t_min) or 1.0
+
+    icon_x = right_x
+    time_x = icon_x + hour_icon_size + col_gap
+    temp_x = time_x + time_col_w + col_gap
     rain_x = temp_x + temp_col_w + col_gap
-    ry = by + header_h + line_gap
-    for time_lbl, temp_lbl, rain_lbl in rows:
-        draw.text((time_x, ry), time_lbl, fill=theme.label_color, font=detail_font)
-        draw.text((temp_x, ry), temp_lbl, fill=theme.label_color, font=detail_font)
-        rain_color = muted if rain_lbl == "dry" else accent
-        draw.text((rain_x, ry), rain_lbl, fill=rain_color, font=detail_font)
-        ry += row_h + row_gap
+    ry = body_y + (body_h - right_h) // 2
+    for (time_lbl, temp_lbl, rain_lbl), hour in zip(rows, report.hours):
+        temp_color = _ramp_color(theme, (hour.temperature - t_min) / t_span)
+        rain_color = _ramp_color(theme, hour.precip_probability / 100.0)
+        # Per-hour condition icon at the row's left edge.
+        hour_key, _ = _weather_condition(hour.weather_code)
+        if hour_key != "unknown":
+            _draw_weather_icon(draw, hour_key, icon_x, ry, hour_icon_size,
+                               theme.label_color, icon_accent, pill_color)
+        # Vertically center the text against the taller icon row.
+        text_y = ry + (hour_row_h - row_h) // 2
+        _text_at(time_lbl, detail_font, time_x, text_y, theme.label_color)
+        _text_at(temp_lbl, detail_font, temp_x, text_y, temp_color)
+        _text_at(rain_lbl, detail_font, rain_x, text_y, rain_color)
+        ry += hour_row_h + row_gap
 
 
 # ---------------------------------------------------------------------------

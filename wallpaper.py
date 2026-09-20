@@ -14,15 +14,25 @@ call. We do this by writing each render to a uniquely-named temp file inside
 ~/.lifecal/, then deleting the previous one after the new path is applied.
 """
 
+import glob
+import logging
 import os
 import platform
 import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from PIL import Image
 
+log = logging.getLogger("lifecal.wallpaper")
+
 WALLPAPER_DIR = os.path.expanduser("~/.lifecal")
+
+# All rendered wallpapers share this prefix so cleanup can find them without
+# touching config, logs, or other files living in the same directory.
+WALLPAPER_PREFIX = "wp_"
+WALLPAPER_GLOB = os.path.join(WALLPAPER_DIR, f"{WALLPAPER_PREFIX}*.png")
 
 # Tracks the path that is currently set as the wallpaper so we can delete
 # it after the next render replaces it.
@@ -32,10 +42,15 @@ _current_wallpaper_path: str = ""
 def save_image(img: Image.Image) -> str:
     """
     Write *img* to a fresh unique path inside ~/.lifecal/ and return it.
-    Each call produces a different filename so macOS cannot serve a cached copy.
+
+    The filename is ``wp_<timestamp>_<random>.png``. The timestamp makes the
+    files sort chronologically (so the newest is easy to identify for cleanup);
+    the random suffix from mkstemp guarantees uniqueness even for two renders
+    within the same second, which macOS needs to bypass its wallpaper cache.
     """
     os.makedirs(WALLPAPER_DIR, exist_ok=True)
-    fd, path = tempfile.mkstemp(dir=WALLPAPER_DIR, suffix=".png", prefix="wp_")
+    prefix = f"{WALLPAPER_PREFIX}{datetime.now():%Y%m%d%H%M%S}_"
+    fd, path = tempfile.mkstemp(dir=WALLPAPER_DIR, suffix=".png", prefix=prefix)
     try:
         os.close(fd)
         img.save(path, "PNG")
@@ -46,6 +61,55 @@ def save_image(img: Image.Image) -> str:
             pass
         raise
     return path
+
+
+def cleanup_old_wallpapers(keep: int = 1) -> int:
+    """
+    Delete stale rendered wallpapers from ~/.lifecal/, returning the count
+    removed.
+
+    The per-render logic in ``set_wallpaper`` already deletes the immediately
+    previous file, but files can still be orphaned across process restarts,
+    crashes, or a transient delete failure. This sweep is the safety net.
+
+    The file currently set as the wallpaper is always kept. Beyond that, the
+    *keep* newest files are retained (defaulting to just the latest), so a
+    stale wallpaper from a prior run isn't yanked out from under the desktop
+    before this process has rendered its own.
+    """
+    try:
+        files = glob.glob(WALLPAPER_GLOB)
+    except OSError as exc:
+        log.info("Wallpaper cleanup skipped (cannot list dir): %s", exc)
+        return 0
+
+    # Newest first, by modification time.
+    files.sort(key=lambda p: _safe_mtime(p), reverse=True)
+
+    protected = set(files[:max(0, keep)])
+    if _current_wallpaper_path:
+        protected.add(str(Path(_current_wallpaper_path).resolve()))
+
+    removed = 0
+    for path in files:
+        if str(Path(path).resolve()) in protected:
+            continue
+        try:
+            os.unlink(path)
+            removed += 1
+        except OSError as exc:
+            log.info("Could not remove stale wallpaper %s: %s", path, exc)
+
+    if removed:
+        log.info("Wallpaper cleanup removed %d stale file(s).", removed)
+    return removed
+
+
+def _safe_mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
 
 
 def set_wallpaper(image_path: str) -> None:

@@ -27,7 +27,7 @@ from typing import Optional
 
 from config import CONFIG_FILE, Settings, load_settings, save_settings
 from renderer import render
-from wallpaper import render_and_set
+from wallpaper import cleanup_old_wallpapers, render_and_set
 
 # ---------------------------------------------------------------------------
 # Logging — rotating file handler, managed entirely within this process.
@@ -151,11 +151,15 @@ def _run_rumps_app() -> None:
             # State for the minute-tick timer
             self._last_minute: int = -1
             self._last_config_mtime: float = 0.0
+            self._last_cleanup_hour: int = -1
 
             # Register NSWorkspace notification observers so we can
             # re-render immediately on screen wake and Space switch.
             self._observers = []
             self._register_system_observers()
+
+            # Sweep away any wallpaper images orphaned by a previous run.
+            cleanup_old_wallpapers()
 
             # Kick off an immediate render on startup
             self._do_tick(None)
@@ -250,6 +254,11 @@ def _run_rumps_app() -> None:
                 do_render()
                 self._last_minute = current_minute
 
+            # Sweep stale wallpaper images once an hour
+            if now.hour != self._last_cleanup_hour:
+                cleanup_old_wallpapers()
+                self._last_cleanup_hour = now.hour
+
         # ------------------------------------------------------------------
 
         def open_settings(self, _sender) -> None:
@@ -307,10 +316,14 @@ def _run_tkinter_fallback() -> None:
 
     stop_event = threading.Event()
 
+    # Sweep away any wallpaper images orphaned by a previous run.
+    cleanup_old_wallpapers()
+
     # ---- Periodic render thread ----------------------------------------
     def _update_loop():
         last_minute = -1
         last_mtime: float = 0.0
+        last_cleanup_hour = -1
         global _current_settings
         while not stop_event.is_set():
             # Config watcher
@@ -330,6 +343,11 @@ def _run_tkinter_fallback() -> None:
             if current_minute != last_minute:
                 do_render()
                 last_minute = current_minute
+
+            # Sweep stale wallpaper images once an hour
+            if now.hour != last_cleanup_hour:
+                cleanup_old_wallpapers()
+                last_cleanup_hour = now.hour
 
             secs = 60 - datetime.now().second
             time.sleep(min(secs, 15))

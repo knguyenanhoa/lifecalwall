@@ -42,6 +42,11 @@ GEOCODE_CACHE_FILE = os.path.join(CACHE_DIR, "geocode_cache.json")
 # Used when the user hasn't set a location.
 DEFAULT_WEATHER_LOCATION = "Ho Chi Minh City"
 
+# Bump whenever the cached report's schema changes (new fields, etc.) so a
+# cache written by an older build is discarded and refetched rather than
+# served with fields silently missing.
+CACHE_VERSION = 2
+
 # How long a fetched report stays fresh before we try to refresh it.
 REFRESH_INTERVAL_SECONDS = 30 * 60  # half an hour
 
@@ -70,6 +75,7 @@ class HourForecast:
     temperature: float    # degrees, in the report's unit
     precip_probability: int  # percent chance of precipitation, 0–100
     precip_amount: float  # precipitation in mm
+    weather_code: Optional[int] = None  # condition for this hour, as a WMO code
 
 
 @dataclass
@@ -80,6 +86,16 @@ class WeatherReport:
     temperature_unit: str        # e.g. "°C"
     hours: List[HourForecast]    # next FORECAST_HOURS hours
     fetched_at: float            # epoch seconds when fetched
+    temp_low: Optional[float] = None   # today's forecast low, in the report's unit
+    temp_high: Optional[float] = None  # today's forecast high, in the report's unit
+    utc_offset_seconds: Optional[int] = None  # location's UTC offset, in seconds
+    weather_code: Optional[int] = None    # current condition as a WMO code
+    uv_index: Optional[float] = None      # current UV index
+    uv_index_max: Optional[float] = None  # today's peak UV index
+    # Solar events as local-time ISO strings ("2026-09-19T05:42"), may be "".
+    sunrise_today: str = ""      # today's sunrise
+    sunset_today: str = ""       # today's sunset
+    sunrise_tomorrow: str = ""   # tomorrow's sunrise
     requested_location: str = "" # the location string this report was built for
 
     @property
@@ -228,8 +244,9 @@ def _fetch_report(
     url = (
         "https://api.open-meteo.com/v1/forecast"
         f"?latitude={latitude:.4f}&longitude={longitude:.4f}"
-        "&current=temperature_2m"
-        "&hourly=temperature_2m,precipitation_probability,precipitation"
+        "&current=temperature_2m,weather_code,uv_index"
+        "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code"
+        "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max"
         # Two days so a late-evening "next 6 hours" window can roll past
         # midnight into tomorrow instead of running out of hours.
         "&forecast_days=2"
@@ -243,6 +260,7 @@ def _fetch_report(
     temps: List[float] = hourly.get("temperature_2m", [])
     probs: List[float] = hourly.get("precipitation_probability", [])
     amounts: List[float] = hourly.get("precipitation", [])
+    codes: List[float] = hourly.get("weather_code", [])
 
     # Select the next FORECAST_HOURS hourly slots, starting at the current
     # hour and rolling forward — across midnight if necessary.
@@ -255,11 +273,13 @@ def _fetch_report(
             continue
         if slot < current_hour:
             continue
+        code_i = _at(codes, i, None)
         hours.append(HourForecast(
             label=slot.strftime("%H:%M"),
             temperature=_at(temps, i, 0.0),
             precip_probability=int(round(_at(probs, i, 0.0))),
             precip_amount=float(_at(amounts, i, 0.0)),
+            weather_code=int(code_i) if code_i is not None else None,
         ))
         if len(hours) >= FORECAST_HOURS:
             break
@@ -268,12 +288,39 @@ def _fetch_report(
     current_units = data.get("current_units", {})
     temperature_unit = current_units.get("temperature_2m", "°F" if fahrenheit else "°C")
 
+    # Today's low/high come from the first entry of the daily arrays.
+    daily = data.get("daily", {})
+    highs = daily.get("temperature_2m_max", [])
+    lows = daily.get("temperature_2m_min", [])
+    temp_high = float(highs[0]) if highs else None
+    temp_low = float(lows[0]) if lows else None
+
+    offset = data.get("utc_offset_seconds")
+    utc_offset_seconds = int(offset) if offset is not None else None
+
+    sunrises = daily.get("sunrise", [])
+    sunsets = daily.get("sunset", [])
+
+    code = current.get("weather_code")
+    uv_now = current.get("uv_index")
+    uv_max_list = daily.get("uv_index_max", [])
+    uv_max = uv_max_list[0] if uv_max_list else None
+
     return WeatherReport(
         location=location_name,
         temperature=float(current.get("temperature_2m", hours[0].temperature if hours else 0.0)),
         temperature_unit=temperature_unit,
         hours=hours,
         fetched_at=time.time(),
+        temp_low=temp_low,
+        temp_high=temp_high,
+        utc_offset_seconds=utc_offset_seconds,
+        sunrise_today=str(_at(sunrises, 0, "")),
+        sunset_today=str(_at(sunsets, 0, "")),
+        sunrise_tomorrow=str(_at(sunrises, 1, "")),
+        weather_code=int(code) if code is not None else None,
+        uv_index=float(uv_now) if uv_now is not None else None,
+        uv_index_max=float(uv_max) if uv_max is not None else None,
     )
 
 
@@ -292,6 +339,11 @@ def _load_cache() -> Optional[WeatherReport]:
     try:
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+        # Discard caches written by an older schema so newly-added fields
+        # (e.g. hourly weather codes) aren't served as missing.
+        if data.get("cache_version") != CACHE_VERSION:
+            log.info("Discarding weather cache from an older schema version.")
+            return None
         hours = [HourForecast(**h) for h in data.get("hours", [])]
         return WeatherReport(
             location=data.get("location", ""),
@@ -299,6 +351,15 @@ def _load_cache() -> Optional[WeatherReport]:
             temperature_unit=data.get("temperature_unit", "°C"),
             hours=hours,
             fetched_at=data.get("fetched_at", 0.0),
+            temp_low=data.get("temp_low"),
+            temp_high=data.get("temp_high"),
+            utc_offset_seconds=data.get("utc_offset_seconds"),
+            sunrise_today=data.get("sunrise_today", ""),
+            sunset_today=data.get("sunset_today", ""),
+            sunrise_tomorrow=data.get("sunrise_tomorrow", ""),
+            weather_code=data.get("weather_code"),
+            uv_index=data.get("uv_index"),
+            uv_index_max=data.get("uv_index_max"),
             requested_location=data.get("requested_location", ""),
         )
     except (json.JSONDecodeError, OSError, KeyError, TypeError) as exc:
@@ -309,8 +370,10 @@ def _load_cache() -> Optional[WeatherReport]:
 def _save_cache(report: WeatherReport) -> None:
     os.makedirs(CACHE_DIR, exist_ok=True)
     try:
+        payload = asdict(report)
+        payload["cache_version"] = CACHE_VERSION
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(asdict(report), f)
+            json.dump(payload, f)
     except OSError as exc:
         log.info("Could not write weather cache: %s", exc)
 
