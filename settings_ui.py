@@ -198,27 +198,43 @@ class SettingsWindow:
             command=self._schedule_preview, **radio_style,
         ).pack(side="left", padx=(10, 0))
 
+        # ---- Weather: rain display --------------------------------------
+        tk.Label(frm, text="Rain chance:", bg="#1e1e2e", fg=LABEL_FG).grid(
+            row=10, column=0, sticky="w", pady=4,
+        )
+        self._rain_as_pie_var = tk.BooleanVar(value=self._settings.weather_rain_as_pie)
+        rain_frame = tk.Frame(frm, bg="#1e1e2e")
+        rain_frame.grid(row=10, column=1, columnspan=2, sticky="w", pady=4, padx=(8, 0))
+        tk.Radiobutton(
+            rain_frame, text="Pie chart", variable=self._rain_as_pie_var, value=True,
+            command=self._schedule_preview, **radio_style,
+        ).pack(side="left")
+        tk.Radiobutton(
+            rain_frame, text="Percentage", variable=self._rain_as_pie_var, value=False,
+            command=self._schedule_preview, **radio_style,
+        ).pack(side="left", padx=(10, 0))
+
         # ---- Separator --------------------------------------------------
         tk.Frame(frm, bg="#45475a", height=1).grid(
-            row=10, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
+            row=11, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
         )
 
         # ---- Preview canvas ---------------------------------------------
         tk.Label(frm, text="Preview:", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=11, column=0, sticky="nw", pady=(0, 4),
+            row=12, column=0, sticky="nw", pady=(0, 4),
         )
         self._preview_canvas = tk.Canvas(
             frm, width=PREVIEW_W, height=PREVIEW_H,
             bg="#000000", highlightthickness=0,
         )
         self._preview_canvas.grid(
-            row=12, column=0, columnspan=3, pady=(0, PAD),
+            row=13, column=0, columnspan=3, pady=(0, PAD),
         )
         self._preview_img_ref: Optional[ImageTk.PhotoImage] = None  # keep ref alive
 
         # ---- Buttons ----------------------------------------------------
         btn_frame = tk.Frame(frm, bg="#1e1e2e")
-        btn_frame.grid(row=13, column=0, columnspan=3, sticky="e")
+        btn_frame.grid(row=14, column=0, columnspan=3, sticky="e")
 
         tk.Button(
             btn_frame, text="Apply", command=self._on_apply_click,
@@ -320,6 +336,7 @@ class SettingsWindow:
             show_weather=self._show_weather_var.get(),
             weather_fahrenheit=self._fahrenheit_var.get(),
             weather_location=self._location_var.get().strip(),
+            weather_rain_as_pie=self._rain_as_pie_var.get(),
             # The location name drives geocoding; leave the manual coordinate
             # override unset so a typed location is always authoritative.
             weather_latitude=None,

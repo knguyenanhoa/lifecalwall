@@ -572,18 +572,23 @@ def _next_solar_event(report, now: datetime) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _format_hour_rain(hour) -> str:
+def _format_hour_rain(hour, as_pie: bool) -> str:
     """
-    Rain outlook for a single forecast hour.
+    Text shown in the rain cell of a forecast row.
 
-    Dry hour → "dry"
-    Otherwise → chance plus expected amount when measurable, e.g.
-                "65%  1.4mm"  or just  "20%".
+    In pie mode the probability is drawn as a pie, so this returns only the
+    expected amount (e.g. "1.4mm"), or "" when there's no measurable rain.
+
+    In percentage mode this returns the chance, plus the amount when
+    measurable — e.g. "65%  1.4mm" or just "20%" — mirroring the earlier
+    text-only presentation.
     """
-    if hour.precip_probability < 15 and hour.precip_amount < 0.1:
-        return "dry"
-    if hour.precip_amount >= 0.1:
-        return f"{hour.precip_probability}%  {hour.precip_amount:.1f}mm"
+    has_mm = hour.precip_amount >= 0.1
+    mm = f"{hour.precip_amount:.1f}mm" if has_mm else ""
+    if as_pie:
+        return mm
+    if has_mm:
+        return f"{hour.precip_probability}%  {mm}"
     return f"{hour.precip_probability}%"
 
 
@@ -643,6 +648,26 @@ def _draw_crescent_moon(
          cx + radius + bite_dx, cy + radius - radius * 0.15],
         fill=bg,
     )
+
+
+def _draw_rain_pie(draw, cx, cy, radius, fraction, fill, track, outline) -> None:
+    """
+    Draw a mini pie chart at centre (cx, cy) showing *fraction* (0–1) filled.
+
+    The full disc is drawn in *track* (an empty/background tone), then a wedge
+    proportional to the fraction is filled in *fill*, sweeping clockwise from
+    12 o'clock, and finally a thin *outline* ring frames the whole circle.
+    """
+    box = [cx - radius, cy - radius, cx + radius, cy + radius]
+    draw.ellipse(box, fill=track)
+    fraction = 0.0 if fraction < 0 else 1.0 if fraction > 1 else fraction
+    if fraction > 0:
+        # Pillow angles: 0° points to 3 o'clock and increase clockwise, so
+        # starting at -90° begins the wedge at 12 o'clock.
+        start = -90
+        end = start + 360 * fraction
+        draw.pieslice(box, start, end, fill=fill)
+    draw.ellipse(box, outline=outline, width=max(1, radius // 6))
 
 
 def _draw_sun(draw, x, y, size, color) -> None:
@@ -816,9 +841,11 @@ def _draw_weather(
     week_summary = _summarize_week(report.weekly_codes)
     week_text = f"7-day: {week_summary}" if week_summary else ""
 
-    # Right column — one row per hour: time, temperature, rain.
+    # Right column — one row per hour: time, temperature, rain. Rain chance is
+    # shown either as a mini pie chart or as "NN%" text per the user setting.
+    rain_as_pie = settings.weather_rain_as_pie
     rows = [
-        (h.label, f"{h.temperature:.0f}{unit}", _format_hour_rain(h))
+        (h.label, f"{h.temperature:.0f}{unit}", _format_hour_rain(h, rain_as_pie))
         for h in report.hours
     ]
 
@@ -858,13 +885,22 @@ def _draw_weather(
     # each row, followed by the time, temperature, and rain columns.
     col_gap = 10
     hour_icon_size = row_h + base_font_size // 2
+    # Rain chance: either a mini pie chart (optionally followed by the mm
+    # amount) or plain "NN%" text, depending on the setting.
+    pie_d = row_h + base_font_size // 2  # a bit larger than the text height
+    pie_gap = 6                         # gap between the pie and the mm text
     time_col_w = max((_text_size(draw, r[0], detail_font)[0] for r in rows), default=0)
     temp_col_w = max((_text_size(draw, r[1], detail_font)[0] for r in rows), default=0)
-    rain_col_w = max((_text_size(draw, r[2], detail_font)[0] for r in rows), default=0)
+    rain_text_w = max((_text_size(draw, r[2], detail_font)[0] for r in rows), default=0)
+    if rain_as_pie:
+        rain_col_w = pie_d + (pie_gap + rain_text_w if rain_text_w else 0)
+    else:
+        rain_col_w = rain_text_w
     right_w = (hour_icon_size + col_gap + time_col_w + col_gap
                + temp_col_w + col_gap + rain_col_w)
-    # Rows are as tall as the icon so it isn't clipped.
-    hour_row_h = max(row_h, hour_icon_size)
+    # Rows are as tall as their tallest element (icon, and the pie in pie mode)
+    # so nothing is clipped.
+    hour_row_h = max(row_h, hour_icon_size, pie_d if rain_as_pie else 0)
     right_h = len(rows) * hour_row_h + max(0, len(rows) - 1) * row_gap
 
     # The two columns sit side by side; the body is as tall as the taller one.
@@ -971,6 +1007,10 @@ def _draw_weather(
     t_max = report.temp_high if report.temp_high is not None else (max(hourly_temps) if hourly_temps else 1.0)
     t_span = (t_max - t_min) or 1.0
 
+    # Pie palette: a dim empty track and a subtle framing ring.
+    pie_track = _blend(theme.background, theme.label_color, 0.18)
+    pie_outline = _blend(theme.background, theme.label_color, 0.45)
+
     icon_x = right_x
     time_x = icon_x + hour_icon_size + col_gap
     temp_x = time_x + time_col_w + col_gap
@@ -988,7 +1028,18 @@ def _draw_weather(
         text_y = ry + (hour_row_h - row_h) // 2
         _text_at(time_lbl, detail_font, time_x, text_y, theme.label_color)
         _text_at(temp_lbl, detail_font, temp_x, text_y, temp_color)
-        _text_at(rain_lbl, detail_font, rain_x, text_y, rain_color)
+        # Rain chance: pie chart (+ mm text) or plain percentage text.
+        if rain_as_pie:
+            pie_cx = rain_x + pie_d // 2
+            pie_cy = ry + hour_row_h // 2
+            _draw_rain_pie(draw, pie_cx, pie_cy, pie_d // 2,
+                           hour.precip_probability / 100.0,
+                           fill=rain_color, track=pie_track, outline=pie_outline)
+            if rain_lbl:
+                _text_at(rain_lbl, detail_font, rain_x + pie_d + pie_gap, text_y,
+                         rain_color)
+        else:
+            _text_at(rain_lbl, detail_font, rain_x, text_y, rain_color)
         ry += hour_row_h + row_gap
 
     # ---- Weekly overview footer (full width, centered) ----------------------

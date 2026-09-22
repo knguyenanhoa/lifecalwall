@@ -214,6 +214,8 @@ class Settings:
     # after geocoding so we don't re-geocode on every render.
     weather_latitude: Optional[float] = None
     weather_longitude: Optional[float] = None
+    # Hourly rain chance display: True → mini pie chart, False → "NN%" text.
+    weather_rain_as_pie: bool = True
 
 
 def load_settings() -> Settings:
