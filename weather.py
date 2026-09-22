@@ -25,7 +25,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
 
@@ -45,7 +45,7 @@ DEFAULT_WEATHER_LOCATION = "Ho Chi Minh City"
 # Bump whenever the cached report's schema changes (new fields, etc.) so a
 # cache written by an older build is discarded and refetched rather than
 # served with fields silently missing.
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 # How long a fetched report stays fresh before we try to refresh it.
 REFRESH_INTERVAL_SECONDS = 30 * 60  # half an hour
@@ -96,6 +96,8 @@ class WeatherReport:
     sunrise_today: str = ""      # today's sunrise
     sunset_today: str = ""       # today's sunset
     sunrise_tomorrow: str = ""   # tomorrow's sunrise
+    # Daily WMO weather codes for the running 7-day forecast (today first).
+    weekly_codes: List[int] = field(default_factory=list)
     requested_location: str = "" # the location string this report was built for
 
     @property
@@ -246,10 +248,11 @@ def _fetch_report(
         f"?latitude={latitude:.4f}&longitude={longitude:.4f}"
         "&current=temperature_2m,weather_code,uv_index"
         "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code"
-        "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max"
-        # Two days so a late-evening "next 6 hours" window can roll past
-        # midnight into tomorrow instead of running out of hours.
-        "&forecast_days=2"
+        "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,weather_code"
+        # Seven days for the running weekly overview. This also gives the
+        # hourly arrays enough range for the "next 6 hours" window to roll
+        # past midnight into tomorrow; only the first 6 hourly slots are used.
+        "&forecast_days=7"
         f"&temperature_unit={unit_param}"
         "&timezone=auto"
     )
@@ -306,6 +309,8 @@ def _fetch_report(
     uv_max_list = daily.get("uv_index_max", [])
     uv_max = uv_max_list[0] if uv_max_list else None
 
+    weekly_codes = [int(c) for c in daily.get("weather_code", []) if c is not None]
+
     return WeatherReport(
         location=location_name,
         temperature=float(current.get("temperature_2m", hours[0].temperature if hours else 0.0)),
@@ -321,6 +326,7 @@ def _fetch_report(
         weather_code=int(code) if code is not None else None,
         uv_index=float(uv_now) if uv_now is not None else None,
         uv_index_max=float(uv_max) if uv_max is not None else None,
+        weekly_codes=weekly_codes,
     )
 
 
@@ -360,6 +366,7 @@ def _load_cache() -> Optional[WeatherReport]:
             weather_code=data.get("weather_code"),
             uv_index=data.get("uv_index"),
             uv_index_max=data.get("uv_index_max"),
+            weekly_codes=data.get("weekly_codes", []),
             requested_location=data.get("requested_location", ""),
         )
     except (json.JSONDecodeError, OSError, KeyError, TypeError) as exc:

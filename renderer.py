@@ -400,15 +400,16 @@ def _draw_stats_and_live(
 # Weather report (bottom-left pill)
 # ---------------------------------------------------------------------------
 
-def _format_dates(today: date) -> Tuple[str, str]:
+def _format_dates(today: date) -> Tuple[str, str, Optional[int]]:
     """
-    Return (gregorian, lunar) date strings for *today*.
+    Return (gregorian, lunar_string, lunar_day) for *today*.
 
     Gregorian is always available. The lunar date uses the Chinese lunar
     calendar via the `lunardate` package (which the Vietnamese calendar
     tracks, up to an occasional one-day timezone offset). If that package is
-    unavailable, the lunar string comes back empty so the caller can simply
-    omit it rather than fail.
+    unavailable, the lunar string comes back empty and lunar_day is None so
+    the caller can simply omit it rather than fail. lunar_day is the day number
+    within the lunar month (1–30), used to mark observance days.
     """
     gregorian = today.strftime("%a, %d %b %Y")
 
@@ -422,10 +423,9 @@ def _format_dates(today: date) -> Tuple[str, str]:
         name = month_abbrev[(lunar.month - 1) % 12]
         leap = "+" if getattr(lunar, "isLeapMonth", False) else ""
         lunar_str = f"{lunar.day:02d} {name}{leap}"
+        return gregorian, lunar_str, lunar.day
     except Exception:
-        lunar_str = ""
-
-    return gregorian, lunar_str
+        return gregorian, "", None
 
 
 def _weather_condition(code: Optional[int]) -> Tuple[str, str]:
@@ -481,6 +481,60 @@ def _uv_label(uv: float) -> str:
     if uv < 11:
         return "Very high"
     return "Extreme"
+
+
+def _code_bucket(code: int) -> str:
+    """Collapse a WMO code into a coarse weekly-summary bucket."""
+    if code in (0, 1):
+        return "sunny"
+    if code in (2, 3, 45, 48):
+        return "cloudy"
+    if 71 <= code <= 77 or code in (85, 86):
+        return "snowy"
+    if 95 <= code <= 99:
+        return "stormy"
+    if 51 <= code <= 67 or 80 <= code <= 82:
+        return "rainy"
+    return "cloudy"
+
+
+def _summarize_week(codes) -> str:
+    """
+    Aggregate up-to-7 daily WMO codes into a one-line outlook, e.g.
+    "mostly rainy", "mostly sunny and cloudy", or "an even mix of rain and
+    shine". Returns "" when there are no codes to summarize.
+    """
+    if not codes:
+        return ""
+
+    from collections import Counter
+    counts = Counter(_code_bucket(c) for c in codes)
+    total = sum(counts.values())
+    # Most common buckets, tie-broken by a stable severity order so the phrase
+    # reads naturally rather than depending on dict insertion quirks.
+    severity = {"stormy": 0, "snowy": 1, "rainy": 2, "cloudy": 3, "sunny": 4}
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], severity[kv[0]]))
+
+    top_bucket, top_n = ranked[0]
+
+    # A single bucket dominates the week.
+    if len(ranked) == 1 or top_n >= total * 0.7:
+        return f"mostly {top_bucket}"
+
+    second_bucket, second_n = ranked[1]
+
+    # Two comparable buckets — call it an even mix or pair them up.
+    if top_n == second_n:
+        pair = {top_bucket, second_bucket}
+        if pair == {"rainy", "sunny"}:
+            return "an even mix of rain and shine"
+        return f"an even mix of {top_bucket} and {second_bucket}"
+
+    # One leads but another is clearly present.
+    if second_n >= total * 0.25:
+        return f"mostly {top_bucket} and {second_bucket}"
+
+    return f"mostly {top_bucket}"
 
 
 def _next_solar_event(report, now: datetime) -> Optional[Tuple[str, str]]:
@@ -723,9 +777,11 @@ def _draw_weather(
     deg = unit[0] if unit else "°"
 
     # Date line: Gregorian text, then a drawn moon + lunar "DD Mon" -----------
-    gregorian, lunar = _format_dates(today)
+    gregorian, lunar, lunar_day = _format_dates(today)
     moon_r = max(4, base_font_size // 2)   # crescent radius
     moon_gap = 5                           # space between moon and lunar text
+    # Highlight observance days (2nd and 16th of the lunar month) with a box.
+    lunar_boxed = lunar_day in (2, 16)
 
     # Left column — big current temperature, then low/high, then location.
     temp_text = f"{report.temperature:.0f}{unit}"
@@ -755,6 +811,10 @@ def _draw_weather(
     uv_value = report.uv_index_max if report.uv_index_max is not None else report.uv_index
     uv_text = f"UV {uv_value:.0f} {_uv_label(uv_value)}" if uv_value is not None else ""
     info_text = "  ·  ".join(t for t in (condition_label, uv_text) if t)
+
+    # Running 7-day overview — one-line footer spanning the full block width.
+    week_summary = _summarize_week(report.weekly_codes)
+    week_text = f"7-day: {week_summary}" if week_summary else ""
 
     # Right column — one row per hour: time, temperature, rain.
     rows = [
@@ -811,8 +871,13 @@ def _draw_weather(
     body_w = left_w + column_gap + right_w
     body_h = max(left_h, right_h)
 
-    block_w = max(date_line_w, body_w)
+    # Weekly overview footer, spanning the full width under the body.
+    week_w, week_h = _text_size(draw, week_text, detail_font) if week_text else (0, 0)
+
+    block_w = max(date_line_w, body_w, week_w)
     block_h = date_line_h + line_gap + body_h
+    if week_text:
+        block_h += line_gap + week_h
 
     # Center the block horizontally in the bottom zone; keep it near the
     # bottom edge like the stats pill on the right.
@@ -845,8 +910,16 @@ def _draw_weather(
         _draw_crescent_moon(draw, moon_x, by + (date_line_h - 2 * moon_r) // 2,
                             moon_r, bright, pill_color)
         lunar_x = moon_x + 2 * moon_r + moon_gap
-        _text_at(lunar, detail_font, lunar_x, by + (date_line_h - lunar_h) // 2,
-                 theme.label_color)
+        lunar_y = by + (date_line_h - lunar_h) // 2
+        # On observance days (lunar 2nd/16th), frame the lunar date in a box.
+        if lunar_boxed:
+            box_pad_x, box_pad_y = 5, 3
+            draw.rounded_rectangle(
+                [lunar_x - box_pad_x, lunar_y - box_pad_y,
+                 lunar_x + lunar_w + box_pad_x, lunar_y + lunar_h + box_pad_y],
+                radius=3, outline=bright, width=max(1, base_font_size // 8),
+            )
+        _text_at(lunar, detail_font, lunar_x, lunar_y, theme.label_color)
 
     # ---- Body: two columns, each vertically centered within the body --------
     body_y = by + date_line_h + line_gap
@@ -917,6 +990,11 @@ def _draw_weather(
         _text_at(temp_lbl, detail_font, temp_x, text_y, temp_color)
         _text_at(rain_lbl, detail_font, rain_x, text_y, rain_color)
         ry += hour_row_h + row_gap
+
+    # ---- Weekly overview footer (full width, centered) ----------------------
+    if week_text:
+        week_y = body_y + body_h + line_gap
+        _centered_in(week_text, detail_font, bx, block_w, week_y, bright)
 
 
 # ---------------------------------------------------------------------------
