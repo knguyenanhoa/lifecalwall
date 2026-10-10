@@ -1,0 +1,24 @@
+{
+  "name": "season_winter",
+  "background": [6, 9, 14],
+  "elapsed_period_colors": [
+    [90, 140, 200],
+    [120, 170, 215],
+    [150, 190, 220]
+  ],
+  "elapsed_period_end_colors": [
+    [150, 190, 230],
+    [185, 210, 235],
+    [220, 235, 245]
+  ],
+  "future_period_colors": [
+    [18, 26, 40],
+    [22, 32, 46],
+    [28, 38, 52]
+  ],
+  "border_color": [16, 24, 36],
+  "label_color": [160, 190, 220],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": true
+}

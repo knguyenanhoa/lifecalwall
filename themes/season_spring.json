@@ -1,0 +1,24 @@
+{
+  "name": "season_spring",
+  "background": [6, 12, 8],
+  "elapsed_period_colors": [
+    [120, 200, 110],
+    [230, 150, 190],
+    [150, 210, 120]
+  ],
+  "elapsed_period_end_colors": [
+    [180, 240, 150],
+    [255, 190, 220],
+    [200, 240, 160]
+  ],
+  "future_period_colors": [
+    [18, 40, 20],
+    [40, 24, 34],
+    [22, 42, 22]
+  ],
+  "border_color": [12, 28, 16],
+  "label_color": [150, 210, 160],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": true
+}

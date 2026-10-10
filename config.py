@@ -9,6 +9,7 @@ the fallback is "dark".
 import json
 import os
 from dataclasses import dataclass, asdict
+from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -37,6 +38,46 @@ PERIOD_YEARS = 30
 # ---------------------------------------------------------------------------
 
 FALLBACK_THEME_NAME = "dark"
+
+# ---------------------------------------------------------------------------
+# Dynamic "seasons" theme
+# ---------------------------------------------------------------------------
+#
+# The four season palettes are ordinary theme JSON files and are selectable on
+# their own. On top of them sits a dynamic pseudo-theme that isn't backed by a
+# file: when selected, it resolves at render time to whichever season palette
+# matches the current date. The " (auto)" suffix in its display name marks it
+# as dynamic in the theme picker.
+
+SEASON_THEME_NAMES = {
+    "spring": "season_spring",
+    "summer": "season_summer",
+    "autumn": "season_autumn",
+    "winter": "season_winter",
+}
+
+# Reserved name for the dynamic theme. The suffix flags it as date-driven.
+SEASON_DYNAMIC_NAME = "season_dynamic (auto)"
+
+
+def _season_for_date(today: date) -> str:
+    """
+    Return the season key ("spring"/"summer"/"autumn"/"winter") for *today*,
+    using Northern-Hemisphere meteorological seasons (whole months):
+
+        spring  Mar–May
+        summer  Jun–Aug
+        autumn  Sep–Nov
+        winter  Dec–Feb
+    """
+    month = today.month
+    if 3 <= month <= 5:
+        return "spring"
+    if 6 <= month <= 8:
+        return "summer"
+    if 9 <= month <= 11:
+        return "autumn"
+    return "winter"
 
 
 @dataclass
@@ -170,8 +211,13 @@ def load_all_themes() -> Dict[str, Theme]:
 
 
 def list_theme_names() -> List[str]:
-    """Return a sorted list of all available theme names."""
-    return sorted(load_all_themes().keys())
+    """
+    Return a sorted list of all selectable theme names, including the dynamic
+    seasons theme (which has no backing file and so isn't in load_all_themes).
+    """
+    names = set(load_all_themes().keys())
+    names.add(SEASON_DYNAMIC_NAME)
+    return sorted(names)
 
 
 # Module-level cache — loaded once on import, can be refreshed with reload_themes()
@@ -241,10 +287,19 @@ def save_settings(settings: Settings) -> None:
         json.dump(asdict(settings), f, indent=2)
 
 
-def get_theme(settings: Settings) -> Theme:
+def get_theme(settings: Settings, today: Optional[date] = None) -> Theme:
     """
     Return the Theme for the current settings.
 
+    When the selected theme is the dynamic seasons theme, resolve it to the
+    season palette matching *today* (defaults to the real current date).
     Falls back to the default theme if the requested theme is not found.
     """
-    return THEMES.get(settings.theme, THEMES[FALLBACK_THEME_NAME])
+    name = settings.theme
+
+    if name == SEASON_DYNAMIC_NAME:
+        if today is None:
+            today = date.today()
+        name = SEASON_THEME_NAMES[_season_for_date(today)]
+
+    return THEMES.get(name, THEMES[FALLBACK_THEME_NAME])

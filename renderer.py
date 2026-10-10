@@ -128,7 +128,7 @@ def render(settings: Settings, today: Optional[date] = None,
     if now is None:
         now = datetime.now()
 
-    theme = get_theme(settings)
+    theme = get_theme(settings, today)
 
     # Canvas ------------------------------------------------------------------
     if settings.canvas_width > 0 and settings.canvas_height > 0:

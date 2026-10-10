@@ -1,0 +1,24 @@
+{
+  "name": "season_autumn",
+  "background": [12, 7, 3],
+  "elapsed_period_colors": [
+    [220, 150, 50],
+    [200, 90, 40],
+    [150, 55, 35]
+  ],
+  "elapsed_period_end_colors": [
+    [245, 190, 90],
+    [230, 130, 60],
+    [190, 80, 45]
+  ],
+  "future_period_colors": [
+    [44, 30, 12],
+    [40, 20, 10],
+    [34, 15, 10]
+  ],
+  "border_color": [28, 16, 8],
+  "label_color": [220, 150, 90],
+  "elapsed_style": "solid",
+  "future_style": "solid",
+  "gradient": true
+}
