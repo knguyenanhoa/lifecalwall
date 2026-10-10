@@ -626,28 +626,75 @@ def _ramp_color(theme: Theme, t: float) -> Tuple[int, int, int]:
     return _blend(theme.background, top, brightness)
 
 
-def _draw_crescent_moon(
+_LUNAR_CYCLE_DAYS = 29.53  # mean synodic month
+
+
+def _moon_illumination(lunar_day: Optional[int]) -> Tuple[float, bool]:
+    """
+    Estimate (illuminated_fraction, waxing) from a lunar-calendar day number.
+
+    The Chinese/Vietnamese lunar calendar is a true lunar calendar, so the day
+    of the lunar month closely tracks the moon's phase: day 1 ≈ new moon,
+    ~day 15 ≈ full moon. We map the day onto the synodic cycle to get the
+    illuminated fraction and whether the moon is waxing (growing toward full)
+    or waning (shrinking toward new).
+
+    Returns (0.5, True) as a neutral default when the day is unknown.
+    """
+    if not lunar_day:
+        return 0.5, True
+    # Age in days since the new moon (day 1 is ~new, i.e. age 0).
+    age = (lunar_day - 1) % _LUNAR_CYCLE_DAYS
+    phase = 2 * math.pi * age / _LUNAR_CYCLE_DAYS  # 0=new, π=full, 2π=new
+    illum = (1 - math.cos(phase)) / 2              # 0 at new, 1 at full
+    waxing = age < _LUNAR_CYCLE_DAYS / 2
+    return illum, waxing
+
+
+def _draw_moon_phase(
     draw: ImageDraw.ImageDraw,
     x: int, y: int, radius: int,
     color: Tuple[int, int, int],
     bg: Tuple[int, int, int],
+    lunar_day: Optional[int] = None,
 ) -> None:
     """
-    Draw a small crescent moon with its bounding box's top-left at (x, y).
+    Draw the moon at (x, y) showing the phase implied by *lunar_day*.
 
-    The system fallback fonts have no moon glyph (they render a tofu box), so
-    the moon is drawn as vectors: a filled disc with an overlapping
-    background-coloured disc bitten out of it to leave a crescent.
+    The system fallback fonts have no moon glyph, so the moon is drawn as
+    vectors. The lit disc is built from a lit half-disc plus a terminator
+    ellipse: for a crescent the ellipse is painted in the dark/background tone
+    (carving the lit half down to a sliver), and for a gibbous it's painted in
+    the lit tone (filling the dark half out toward full). The lit side is the
+    right for a waxing moon and the left for a waning moon (Northern view).
     """
     cx, cy = x + radius, y + radius
-    draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=color)
-    # Offset the "bite" toward the upper-right for a waxing-crescent look.
-    bite_dx = radius * 0.6
-    draw.ellipse(
-        [cx - radius + bite_dx, cy - radius - radius * 0.15,
-         cx + radius + bite_dx, cy + radius - radius * 0.15],
-        fill=bg,
-    )
+    box = [cx - radius, cy - radius, cx + radius, cy + radius]
+
+    illum, waxing = _moon_illumination(lunar_day)
+
+    # Dark base disc with a faint ring so a new moon still reads as a circle.
+    ring = _blend(bg, color, 0.5)
+    draw.ellipse(box, fill=bg, outline=ring, width=max(1, radius // 6))
+
+    # The lit half: right side when waxing, left side when waning. Pillow
+    # angles go clockwise from 3 o'clock, so -90..90 is the right semicircle.
+    if waxing:
+        draw.pieslice(box, -90, 90, fill=color)
+    else:
+        draw.pieslice(box, 90, 270, fill=color)
+
+    # Terminator ellipse: its half-width shrinks as the phase nears the
+    # quarters (straight terminator) and grows toward new/full.
+    term_w = radius * abs(1 - 2 * illum)
+    if term_w >= 1:
+        term_box = [cx - term_w, cy - radius, cx + term_w, cy + radius]
+        # Crescent (<half lit): carve the lit half with the dark tone.
+        # Gibbous (>half lit): extend light into the dark half.
+        draw.ellipse(term_box, fill=(bg if illum < 0.5 else color))
+
+    # Re-stroke the outline so the disc edge stays crisp over the fills.
+    draw.ellipse(box, outline=ring, width=max(1, radius // 6))
 
 
 def _draw_rain_pie(draw, cx, cy, radius, fraction, fill, track, outline) -> None:
@@ -845,7 +892,9 @@ def _draw_weather(
     # shown either as a mini pie chart or as "NN%" text per the user setting.
     rain_as_pie = settings.weather_rain_as_pie
     rows = [
-        (h.label, f"{h.temperature:.0f}{unit}", _format_hour_rain(h, rain_as_pie))
+        # Hourly temps use just the degree sign (like low/high); the big
+        # current temperature already shows the full unit.
+        (h.label, f"{h.temperature:.0f}{deg}", _format_hour_rain(h, rain_as_pie))
         for h in report.hours
     ]
 
@@ -937,25 +986,39 @@ def _draw_weather(
         w, _ = _text_size(draw, text, font)
         _text_at(text, font, col_x + (col_w - w) // 2, y, fill)
 
-    # ---- Date line (full width, centered) -----------------------------------
-    dx = bx + (block_w - date_line_w) // 2
-    _text_at(gregorian, detail_font, dx, by + (date_line_h - date_h) // 2,
-             theme.label_color)
+    # ---- Date line ----------------------------------------------------------
+    # Align each piece with the column below it: the Gregorian date is centered
+    # over the left (temperature) column, and the moon's left edge lines up
+    # with the forecast icons in the right column. The lunar date trails the
+    # moon. When there's no lunar/moon, fall back to centering the line.
+    date_y = by + (date_line_h - date_h) // 2
+    col_left_x = bx + (block_w - body_w) // 2
     if lunar:
-        moon_x = dx + greg_w + date_sep_w
-        _draw_crescent_moon(draw, moon_x, by + (date_line_h - 2 * moon_r) // 2,
-                            moon_r, bright, pill_color)
-        lunar_x = moon_x + 2 * moon_r + moon_gap
+        _text_at(gregorian, detail_font,
+                 col_left_x + (left_w - greg_w) // 2, date_y, theme.label_color)
+        moon_x = col_left_x + left_w + column_gap  # forecast icons' left edge
+        _draw_moon_phase(draw, moon_x, by + (date_line_h - 2 * moon_r) // 2,
+                         moon_r, bright, pill_color, lunar_day)
+        moon_right = moon_x + 2 * moon_r
+        lunar_x = moon_right + moon_gap
         lunar_y = by + (date_line_h - lunar_h) // 2
         # On observance days (lunar 2nd/16th), frame the lunar date in a box.
         if lunar_boxed:
             box_pad_x, box_pad_y = 5, 3
+            # Keep the box clear of the moon so its outline can't clip the
+            # phase glyph; nudge the lunar text right if needed to fit.
+            box_left = max(lunar_x - box_pad_x, moon_right + moon_gap)
+            lunar_x = box_left + box_pad_x
             draw.rounded_rectangle(
-                [lunar_x - box_pad_x, lunar_y - box_pad_y,
+                [box_left, lunar_y - box_pad_y,
                  lunar_x + lunar_w + box_pad_x, lunar_y + lunar_h + box_pad_y],
                 radius=3, outline=bright, width=max(1, base_font_size // 8),
             )
         _text_at(lunar, detail_font, lunar_x, lunar_y, theme.label_color)
+    else:
+        # No lunar date — just center the Gregorian date on the block.
+        _text_at(gregorian, detail_font, bx + (block_w - greg_w) // 2, date_y,
+                 theme.label_color)
 
     # ---- Body: two columns, each vertically centered within the body --------
     body_y = by + date_line_h + line_gap
