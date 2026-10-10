@@ -409,6 +409,38 @@ def _handle_signal(signum, _frame):
 
 
 # ---------------------------------------------------------------------------
+# tkinter availability
+# ---------------------------------------------------------------------------
+
+def _require_tkinter() -> None:
+    """
+    Exit with a helpful message if tkinter is unavailable.
+
+    On Linux (notably Ubuntu/Debian) tkinter is not bundled with Python and
+    must be installed separately via the system package manager. Without it
+    the app has no way to keep its process alive or show the settings window,
+    so fail early with an actionable hint rather than a raw ImportError.
+    """
+    try:
+        import tkinter  # noqa: F401
+        return
+    except ImportError:
+        pass
+
+    msg = "Tkinter (Python's Tk bindings) is required but not installed."
+    if sys.platform.startswith("linux"):
+        msg += (
+            "\nOn Ubuntu/Debian, install it with:\n"
+            "    sudo apt install python3-tk\n"
+            "On Fedora:   sudo dnf install python3-tkinter\n"
+            "On Arch:     sudo pacman -S tk"
+        )
+    log.error(msg)
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # CLI argument parsing
 # ---------------------------------------------------------------------------
 
@@ -460,6 +492,9 @@ def main() -> None:
 
     # Open settings window first if requested or no birthday is set
     if args.settings or not _current_settings.birthday:
+        # The settings window is a tkinter app; make sure it's available so
+        # the subprocess doesn't crash with a bare ImportError.
+        _require_tkinter()
         log.info("Opening settings window…")
         SETTINGS_SCRIPT = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "settings_ui.py"
@@ -470,11 +505,17 @@ def main() -> None:
 
     log.info("Life Calendar started. PID=%d", os.getpid())
 
-    # Try rumps first (macOS menu-bar); fall back to tkinter hidden window
+    # Try rumps first (macOS menu-bar); fall back to tkinter hidden window.
     try:
         import rumps  # type: ignore  # noqa: F401
-        _run_rumps_app()
     except ImportError:
+        rumps = None
+
+    if rumps is not None:
+        _run_rumps_app()
+    else:
+        # The Linux/no-rumps path needs tkinter to keep the process alive.
+        _require_tkinter()
         _run_tkinter_fallback()
 
     log.info("Life Calendar exited.")

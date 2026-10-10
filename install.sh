@@ -95,6 +95,18 @@ else
     echo ""
     echo "✓ Dependencies installed."
     echo ""
+
+    # tkinter is not bundled with Python on most Linux distros; the app needs
+    # it for the settings window and to keep its process alive.
+    if ! "$PYTHON_BIN" -c "import tkinter" 2>/dev/null; then
+        echo "⚠ Tkinter is not available for this Python."
+        echo "  Install it before running the app:"
+        echo "    Ubuntu/Debian:  sudo apt install python3-tk"
+        echo "    Fedora:         sudo dnf install python3-tkinter"
+        echo "    Arch:           sudo pacman -S tk"
+        echo ""
+    fi
+
     echo "  To start Life Calendar manually:"
     echo "    $PYTHON_BIN $REPO_DIR/main.py"
     echo ""
