@@ -42,9 +42,11 @@ from .grid import (
     weeks_elapsed as _weeks_elapsed,
 )
 from .weather_panel import (
-    code_bucket as _code_bucket,
     draw_uv_bar as _draw_uv_bar,
     draw_weather as _draw_weather,
+)
+from .weather_panel_text import (
+    code_bucket as _code_bucket,
     format_dates as _format_dates,
     format_gmt_offset as _format_gmt_offset,
     format_hour_rain as _format_hour_rain,
