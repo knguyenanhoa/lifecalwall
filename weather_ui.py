@@ -14,6 +14,7 @@ own Cocoa main thread for tkinter), the same way the settings window is.
 import logging
 import threading
 import tkinter as tk
+from dataclasses import replace
 from datetime import date
 from typing import Optional
 
@@ -169,8 +170,13 @@ class WeatherWindow:
     # ------------------------------------------------------------------
 
     def _settings_from_ui(self) -> Settings:
-        """A throwaway Settings carrying only the weather fields we preview."""
-        return Settings(
+        """
+        A throwaway Settings for the preview: start from the user's saved
+        settings so the widget renders in the app's current theme, then
+        override just the weather inputs edited in this window.
+        """
+        settings = replace(
+            self._settings,
             show_weather=True,
             weather_location=self._location_var.get().strip(),
             weather_fahrenheit=self._fahrenheit_var.get(),
@@ -179,6 +185,7 @@ class WeatherWindow:
             weather_latitude=None,
             weather_longitude=None,
         )
+        return settings
 
     def _schedule_preview(self) -> None:
         """Debounce: render 500 ms after the last change (geocoding is slow)."""

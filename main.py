@@ -201,8 +201,8 @@ def _run_rumps_app() -> None:
             self.menu = [
                 rumps.MenuItem("Open Settings", callback=self.open_settings),
                 rumps.MenuItem("Open Weather",  callback=self.open_weather),
-                rumps.MenuItem("Render Now",    callback=self.render_now),
                 None,
+                rumps.MenuItem("Render Now",    callback=self.render_now),
                 self._pause_item,
                 rumps.MenuItem("Restart",       callback=self._restart),
                 None,
