@@ -29,13 +29,15 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+from config import DATA_DIR
+
 log = logging.getLogger("lifecal.weather")
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-CACHE_DIR = os.path.expanduser("~/.lifecal")
+CACHE_DIR = DATA_DIR
 CACHE_FILE = os.path.join(CACHE_DIR, "weather_cache.json")
 GEOCODE_CACHE_FILE = os.path.join(CACHE_DIR, "geocode_cache.json")
 
@@ -99,14 +101,6 @@ class WeatherReport:
     # Daily WMO weather codes for the running 7-day forecast (today first).
     weekly_codes: List[int] = field(default_factory=list)
     requested_location: str = "" # the location string this report was built for
-
-    @property
-    def max_precip_probability(self) -> int:
-        return max((h.precip_probability for h in self.hours), default=0)
-
-    @property
-    def total_precip_amount(self) -> float:
-        return sum(h.precip_amount for h in self.hours)
 
 
 # ---------------------------------------------------------------------------

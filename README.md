@@ -9,6 +9,7 @@ A live desktop wallpaper that renders a **life calendar** — a grid where each 
 - Python 3.9+
 - macOS 12+ (primary) or Linux (X11/Wayland)
 - `Pillow` (installed automatically by `install.sh`)
+- `lunardate` (installed automatically; adds the lunar date + moon phase to the weather panel — the panel still renders without it)
 - `rumps` (optional, for a native macOS menu-bar icon)
 
 ## Quick Start
@@ -54,24 +55,37 @@ Open it any time by:
 | Field | Description |
 |---|---|
 | Birthday | Your date of birth (`YYYY-MM-DD`). Drives the elapsed-week calculation. |
-| Theme | Visual theme (`dark`, `light`, `monochrome`). |
+| Theme | Visual theme (see [Themes](#themes)). |
 | Update interval | How often the wallpaper is re-rendered (minutes). Default: 60. |
 | Show year labels | Toggle the year axis labels. |
 | Show week labels | Toggle the week axis labels. |
+| Show weather | Toggle the weather panel in the bottom zone. |
+| Location | Place name for the weather (e.g. `Ho Chi Minh City`). Blank falls back to the default location. |
+| Temperature unit | `°C` or `°F`. |
+| Rain chance | Show the hourly rain chance as a mini pie chart or as a percentage. |
 
 Changes are applied immediately when you click **Apply**.
 
 ## Themes
 
-Three built-in themes. Each has distinct colours per 30-year period for both elapsed and future cells.
+Themes live as JSON files in the `themes/` directory. Each `.json` file is one
+theme, loaded on startup; its `name` field is what appears in the theme picker.
+Every theme defines distinct colours per 30-year period for both elapsed and
+future cells.
 
-| Theme | Background | Period colours |
-|---|---|---|
-| `dark` | Near-black | Red / Blue / Green (muted) |
-| `light` | Off-white | Red / Blue / Green (pastel) |
-| `monochrome` | Near-black | Light grey / mid grey / dark grey |
+Built-in themes include:
 
-To add a custom theme, edit `config.py` — add an entry to the `THEMES` dict following the `Theme` dataclass pattern.
+| Theme | Notes |
+|---|---|
+| `dark` / `light` / `monochrome` | The original three solid palettes. |
+| `gradient_amber` / `_crimson` / `_emerald` / `_sapphire` / `_violet` | Each period ramps between two colours. |
+| `season_spring` / `_summer` / `_autumn` / `_winter` | Seasonal palettes, selectable on their own. |
+| `season_dynamic (auto)` | A dynamic pseudo-theme (no backing file) that resolves at render time to the season palette matching today's date. |
+| `minecraft` | A themed palette. |
+
+To add a custom theme, drop a new `.json` file in `themes/` following the shape
+of an existing one. The keys mirror the `Theme` dataclass in `config.py`;
+colours are `[r, g, b]` arrays and any omitted key falls back to its default.
 
 ## Configuration File
 
@@ -80,7 +94,7 @@ Stored at `~/.lifecal/config.json`. You can edit it directly; the app picks up c
 ```json
 {
   "birthday": "1990-05-15",
-  "theme": "dark",
+  "theme": "gradient_crimson",
   "update_interval_seconds": 3600,
   "canvas_width": 0,
   "canvas_height": 0,
@@ -90,7 +104,13 @@ Stored at `~/.lifecal/config.json`. You can edit it directly; the app picks up c
   "padding_right": 80,
   "cell_gap": 2,
   "show_year_labels": true,
-  "show_week_labels": true
+  "show_week_labels": true,
+  "show_weather": true,
+  "weather_fahrenheit": false,
+  "weather_location": "",
+  "weather_latitude": null,
+  "weather_longitude": null,
+  "weather_rain_as_pie": true
 }
 ```
 
@@ -128,11 +148,24 @@ rm -rf ~/.lifecal
 ```
 x-lifecal-wallpaper/
 ├── main.py          # entry point, update loop, tray icon
-├── config.py        # settings, themes, constants
-├── renderer.py      # Pillow-based grid renderer
+├── config.py        # settings, themes, constants, data dir
+├── renderer.py      # Pillow-based grid + weather renderer
 ├── wallpaper.py     # OS wallpaper setter (macOS + Linux)
+├── weather.py       # weather fetch + disk cache (stdlib only)
 ├── settings_ui.py   # tkinter settings window
+├── themes/          # one JSON file per theme
+├── tests/           # pytest suite for the pure logic
 ├── install.sh       # one-step install + LaunchAgent setup
 ├── uninstall.sh     # remove LaunchAgent
-└── requirements.txt # Pillow
+└── requirements.txt # Pillow, lunardate
+```
+
+## Development
+
+Run the test suite from the project root (inside the virtualenv):
+
+```bash
+source .venv/bin/activate
+pip install pytest        # once
+python -m pytest
 ```

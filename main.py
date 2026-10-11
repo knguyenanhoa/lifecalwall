@@ -25,7 +25,14 @@ import sys
 from datetime import datetime
 from typing import Optional
 
-from config import CONFIG_FILE, Settings, load_settings, save_settings
+from config import (
+    CONFIG_FILE,
+    DATA_DIR,
+    SETTINGS_SCRIPT,
+    Settings,
+    load_settings,
+    save_settings,
+)
 from renderer import render
 from wallpaper import cleanup_old_wallpapers, render_and_set
 
@@ -35,7 +42,7 @@ from wallpaper import cleanup_old_wallpapers, render_and_set
 # Stops automatically when the process exits; no external tools needed.
 # ---------------------------------------------------------------------------
 
-LOG_DIR      = os.path.expanduser("~/.lifecal/logs")
+LOG_DIR      = os.path.join(DATA_DIR, "logs")
 LOG_MAX_BYTES   = 500_000   # 500 KB per file
 LOG_BACKUP_COUNT = 3        # keep stderr.log + stderr.log.1 + .2 + .3
 
@@ -87,6 +94,62 @@ _current_settings: Optional[Settings] = None
 
 
 # ---------------------------------------------------------------------------
+# Shared periodic driver
+# ---------------------------------------------------------------------------
+#
+# The rumps menu-bar app and the tkinter fallback both need the same recurring
+# work: watch the config file for edits, re-render when the minute rolls over
+# (to keep the live clock current), and sweep stale wallpaper files hourly.
+# The two frontends differ only in *how* they schedule the tick (a Cocoa
+# rumps.Timer vs. a background thread loop), so the tick body itself lives here
+# once and both call it.
+
+class _TickState:
+    """Mutable bookkeeping carried between periodic ticks."""
+
+    def __init__(self) -> None:
+        self.last_minute: int = -1
+        self.last_config_mtime: float = 0.0
+        self.last_cleanup_hour: int = -1
+
+    def force_render_next_tick(self) -> None:
+        """Reset the minute tracker so the next tick re-renders unconditionally."""
+        self.last_minute = -1
+
+
+def run_periodic_checks(state: _TickState) -> None:
+    """
+    Run one periodic tick against *state*: reload settings if the config file
+    changed, re-render on a minute rollover, and clean up stale wallpapers
+    hourly. Shared by both the rumps and tkinter run loops.
+    """
+    global _current_settings
+
+    # Reload settings when the config file changes on disk. The first observed
+    # mtime only seeds the baseline (no reload) so an edit made before startup
+    # isn't mistaken for a live change.
+    try:
+        if os.path.exists(CONFIG_FILE):
+            mtime = os.path.getmtime(CONFIG_FILE)
+            if mtime != state.last_config_mtime and state.last_config_mtime != 0.0:
+                log.info("Config changed on disk — reloading.")
+                _current_settings = load_settings()
+            state.last_config_mtime = mtime
+    except OSError:
+        pass
+
+    now = datetime.now()
+    current_minute = now.hour * 60 + now.minute
+    if current_minute != state.last_minute:
+        do_render()
+        state.last_minute = current_minute
+
+    if now.hour != state.last_cleanup_hour:
+        cleanup_old_wallpapers()
+        state.last_cleanup_hour = now.hour
+
+
+# ---------------------------------------------------------------------------
 # Core render
 # ---------------------------------------------------------------------------
 
@@ -126,10 +189,6 @@ def _run_rumps_app() -> None:
     except Exception:
         pass
 
-    SETTINGS_SCRIPT = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "settings_ui.py"
-    )
-
     class LifeCalApp(rumps.App):
 
         def __init__(self):
@@ -148,10 +207,8 @@ def _run_rumps_app() -> None:
                 rumps.MenuItem("Quit",          callback=self.quit_app),
             ]
 
-            # State for the minute-tick timer
-            self._last_minute: int = -1
-            self._last_config_mtime: float = 0.0
-            self._last_cleanup_hour: int = -1
+            # State for the periodic tick (minute rollover, config watch, cleanup)
+            self._tick_state = _TickState()
 
             # Register NSWorkspace notification observers so we can
             # re-render immediately on screen wake and Space switch.
@@ -217,7 +274,7 @@ def _run_rumps_app() -> None:
             log.info("System event: %s — re-rendering.", name)
             # Reset the minute tracker so _do_tick also fires a render on the
             # next tick even if the minute hasn't changed.
-            self._last_minute = -1
+            self._tick_state.force_render_next_tick()
             do_render()
 
         def _deregister_system_observers(self) -> None:
@@ -231,33 +288,9 @@ def _run_rumps_app() -> None:
         # ------------------------------------------------------------------
 
         def _do_tick(self, _sender) -> None:
-            global _current_settings
-
             if self._paused:
                 return
-
-            # Check config file for changes
-            try:
-                if os.path.exists(CONFIG_FILE):
-                    mtime = os.path.getmtime(CONFIG_FILE)
-                    if mtime != self._last_config_mtime and self._last_config_mtime != 0.0:
-                        log.info("Config changed on disk — reloading.")
-                        _current_settings = load_settings()
-                    self._last_config_mtime = mtime
-            except OSError:
-                pass
-
-            # Re-render when the minute rolls over
-            now = datetime.now()
-            current_minute = now.hour * 60 + now.minute
-            if current_minute != self._last_minute:
-                do_render()
-                self._last_minute = current_minute
-
-            # Sweep stale wallpaper images once an hour
-            if now.hour != self._last_cleanup_hour:
-                cleanup_old_wallpapers()
-                self._last_cleanup_hour = now.hour
+            run_periodic_checks(self._tick_state)
 
         # ------------------------------------------------------------------
 
@@ -284,7 +317,7 @@ def _run_rumps_app() -> None:
                 self._timer.start()
                 sender.title = "Pause Updates"
                 self.title = "🗓"
-                self._last_minute = -1  # force immediate re-render
+                self._tick_state.force_render_next_tick()  # force immediate re-render
                 log.info("Updates resumed.")
 
         def _restart(self, _sender) -> None:
@@ -321,34 +354,11 @@ def _run_tkinter_fallback() -> None:
 
     # ---- Periodic render thread ----------------------------------------
     def _update_loop():
-        last_minute = -1
-        last_mtime: float = 0.0
-        last_cleanup_hour = -1
-        global _current_settings
+        tick_state = _TickState()
         while not stop_event.is_set():
-            # Config watcher
-            try:
-                if os.path.exists(CONFIG_FILE):
-                    mtime = os.path.getmtime(CONFIG_FILE)
-                    if mtime != last_mtime and last_mtime != 0.0:
-                        log.info("Config changed — reloading.")
-                        _current_settings = load_settings()
-                    last_mtime = mtime
-            except OSError:
-                pass
-
-            # Minute tick
-            now = datetime.now()
-            current_minute = now.hour * 60 + now.minute
-            if current_minute != last_minute:
-                do_render()
-                last_minute = current_minute
-
-            # Sweep stale wallpaper images once an hour
-            if now.hour != last_cleanup_hour:
-                cleanup_old_wallpapers()
-                last_cleanup_hour = now.hour
-
+            run_periodic_checks(tick_state)
+            # Wake near the top of the next minute (capped at 15 s) so the live
+            # clock stays close to accurate without busy-waiting.
             secs = 60 - datetime.now().second
             time.sleep(min(secs, 15))
 
@@ -361,9 +371,6 @@ def _run_tkinter_fallback() -> None:
     root.withdraw()
 
     def open_settings_cmd():
-        SETTINGS_SCRIPT = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "settings_ui.py"
-        )
         subprocess.Popen([sys.executable, SETTINGS_SCRIPT], close_fds=True)
 
     def show_status():
@@ -496,9 +503,6 @@ def main() -> None:
         # the subprocess doesn't crash with a bare ImportError.
         _require_tkinter()
         log.info("Opening settings window…")
-        SETTINGS_SCRIPT = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "settings_ui.py"
-        )
         # Run settings window synchronously (blocking) before the main loop
         subprocess.run([sys.executable, SETTINGS_SCRIPT])
         _current_settings = load_settings()

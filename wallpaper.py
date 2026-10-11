@@ -25,9 +25,11 @@ from pathlib import Path
 
 from PIL import Image
 
+from config import DATA_DIR
+
 log = logging.getLogger("lifecal.wallpaper")
 
-WALLPAPER_DIR = os.path.expanduser("~/.lifecal")
+WALLPAPER_DIR = DATA_DIR
 
 # All rendered wallpapers share this prefix so cleanup can find them without
 # touching config, logs, or other files living in the same directory.

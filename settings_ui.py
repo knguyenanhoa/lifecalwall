@@ -9,6 +9,7 @@ Opens a small tkinter window that lets the user:
   • Apply changes (re-render + set wallpaper) immediately
 """
 
+import logging
 import threading
 import tkinter as tk
 from datetime import date
@@ -18,6 +19,8 @@ from typing import Callable, Optional
 from PIL import Image, ImageTk
 
 from config import Settings, get_theme, list_theme_names, load_settings, save_settings
+
+log = logging.getLogger("lifecal.settings_ui")
 from renderer import render
 
 # ---------------------------------------------------------------------------
@@ -282,7 +285,9 @@ class SettingsWindow:
                 img = render(preview_settings)
                 self._root.after(0, lambda: self._update_preview_canvas(img))
             except Exception:
-                pass  # silently ignore render errors in preview
+                # Keep the window alive on a bad render (e.g. a theme that
+                # trips the renderer), but log it so the failure isn't silent.
+                log.exception("Preview render failed")
 
         threading.Thread(target=_do_render, daemon=True).start()
 

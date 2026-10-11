@@ -10,18 +10,28 @@ import json
 import os
 from dataclasses import dataclass, asdict
 from datetime import date
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
-CONFIG_DIR = os.path.expanduser("~/.lifecal")
+# Single source of truth for the app's on-disk data directory. Every module
+# that writes to ~/.lifecal (config, logs, cached wallpapers, weather cache)
+# derives its paths from DATA_DIR so the location can be changed in one place.
+DATA_DIR = os.path.expanduser("~/.lifecal")
+
+CONFIG_DIR = DATA_DIR
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 # Theme directory — lives alongside the source code
 THEMES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "themes")
+
+# Absolute path to the settings window script, launched as its own process so
+# it gets its own Cocoa main thread for tkinter.
+SETTINGS_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "settings_ui.py"
+)
 
 # ---------------------------------------------------------------------------
 # Grid constants — change these to reshape the calendar
