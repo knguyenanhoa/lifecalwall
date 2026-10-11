@@ -65,6 +65,15 @@ Open it any time by:
 
 Changes are applied immediately when you click **Apply**.
 
+## Weather Quick View
+
+The menu-bar icon also has an **Open Weather** item. It opens a small window
+that previews *only* the weather widget, filling the preview. Type a location
+and the forecast re-renders for that place — a quick way to check the weather
+somewhere without changing your wallpaper. You can also toggle the temperature
+unit and rain-chance display here. Nothing in this window is saved; it's a
+throwaway lookup that starts from your current weather settings.
+
 ## Themes
 
 Themes live as JSON files in the `themes/` directory. Each `.json` file is one

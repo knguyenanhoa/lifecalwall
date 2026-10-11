@@ -119,3 +119,102 @@ def test_weather_panel_blank_when_no_report(monkeypatch):
 # tests/conftest or the generating command in the PR notes.
 PIE_MODE_DIGEST = "a5344738bfe3dba17f6589e3d560353146fbba38dba9db185a3672b4e5312c87"
 PCT_MODE_DIGEST = "671ca6d5c90b2d69ebbcebf7404ad129b2e45ad010199b3862c94a7bd50396e9"
+
+
+# ---------------------------------------------------------------------------
+# render_weather_only — the standalone "Open Weather" quick view
+# ---------------------------------------------------------------------------
+
+def _has_content(img: Image.Image) -> bool:
+    """True if any pixel differs from the top-left (background) pixel."""
+    from PIL import ImageChops
+    flat = Image.new(img.mode, img.size, img.getpixel((0, 0)))
+    return ImageChops.difference(img, flat).getbbox() is not None
+
+
+def test_render_weather_only_draws_panel(pinned_weather):
+    from renderer import render_weather_only
+    settings = Settings(show_weather=True, weather_location="Ho Chi Minh City")
+    img = render_weather_only(settings, 620, 420,
+                              today=date(2026, 10, 11),
+                              now=datetime(2026, 10, 11, 14, 30))
+    assert img.size == (620, 420)
+    # The widget should actually be drawn, not left as a blank background.
+    assert _has_content(img)
+
+
+def test_render_weather_only_is_blank_without_report(monkeypatch):
+    from renderer import render_weather_only
+    monkeypatch.setattr(weather_mod, "get_weather", lambda **kw: None)
+    settings = Settings(show_weather=True)
+    img = render_weather_only(settings, 620, 420,
+                              today=date(2026, 10, 11),
+                              now=datetime(2026, 10, 11, 14, 30))
+    # No weather → plain theme background, nothing painted.
+    assert not _has_content(img)
+
+
+# ---------------------------------------------------------------------------
+# Regression: a long 7-day summary must not push the forecast off the canvas
+# ---------------------------------------------------------------------------
+
+def _long_summary_report() -> WeatherReport:
+    """A report whose weekly codes yield the longest summary phrasing."""
+    rep = _fixed_report()
+    # Equal rainy/cloudy counts → "an even mix of rainy and cloudy".
+    rep.weekly_codes = [61, 63, 2, 3]
+    return rep
+
+
+def test_long_week_summary_does_not_clip_forecast(monkeypatch):
+    from renderer.draw_utils import resolve_font, text_size
+    from renderer.weather_layout import build_weather_layout
+
+    monkeypatch.setattr(weather_mod, "get_weather", lambda **kw: _long_summary_report())
+
+    # A deliberately narrow canvas: before the fix, the long summary widened
+    # the left column and ran the forecast's rain mm text off the right edge.
+    narrow_w = 460
+    img = Image.new("RGB", (narrow_w, 420), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, _long_summary_report(), narrow_w, 0, 420,
+        Settings(weather_rain_as_pie=True, weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
+    )
+
+    detail_font = resolve_font(max(9, BASE_FONT - 1))
+
+    def row_right_edge(row):
+        if row.rain_text is not None:
+            return row.rain_text.x + text_size(draw, row.rain_text.text, detail_font)[0]
+        return row.pie_cx + row.pie_r
+
+    rightmost = max(row_right_edge(r) for r in layout.forecast_rows)
+    # The forecast's rightmost content must stay within the canvas.
+    assert rightmost <= narrow_w, f"forecast content clipped: {rightmost} > {narrow_w}"
+
+    # And the summary should have been truncated (ellipsis) to make it fit.
+    assert layout.week is not None
+    assert layout.week.text.endswith("…")
+
+
+def test_week_summary_shown_in_full_on_wide_canvas(monkeypatch):
+    from renderer.weather_layout import build_weather_layout
+
+    monkeypatch.setattr(weather_mod, "get_weather", lambda **kw: _long_summary_report())
+
+    wide_w = 1600
+    img = Image.new("RGB", (wide_w, 420), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, _long_summary_report(), wide_w, 0, 420,
+        Settings(weather_rain_as_pie=True, weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
+    )
+    # Plenty of room → full phrase, no ellipsis.
+    assert layout.week is not None
+    assert layout.week.text == "7-day: an even mix of rainy and cloudy"
+    assert not layout.week.text.endswith("…")

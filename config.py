@@ -27,11 +27,11 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 # Theme directory — lives alongside the source code
 THEMES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "themes")
 
-# Absolute path to the settings window script, launched as its own process so
-# it gets its own Cocoa main thread for tkinter.
-SETTINGS_SCRIPT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "settings_ui.py"
-)
+# Absolute paths to the tkinter window scripts, each launched as its own
+# process so it gets its own Cocoa main thread for tkinter.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_SCRIPT = os.path.join(_HERE, "settings_ui.py")
+WEATHER_SCRIPT = os.path.join(_HERE, "weather_ui.py")
 
 # ---------------------------------------------------------------------------
 # Grid constants — change these to reshape the calendar

@@ -28,7 +28,43 @@ from .grid import (
     period_index,
     weeks_elapsed,
 )
-from .weather_panel import draw_weather
+from .weather_panel import draw_weather, render_weather_panel
+
+
+def render_weather_only(
+    settings: Settings,
+    width: int,
+    height: int,
+    today: Optional[date] = None,
+    now: Optional[datetime] = None,
+) -> Image.Image:
+    """
+    Render *only* the weather widget onto a width×height image, sized so the
+    panel fills the frame.
+
+    This backs the "Open Weather" quick view: a fast way to see the weather
+    for different locations without the surrounding life calendar. The panel's
+    base font is scaled up relative to the frame so the widget reads large,
+    then it is centered on a background matching the resolved theme.
+
+    Returns a plain background image when there is no weather data to show
+    (offline with no cache), mirroring the main render's behaviour of simply
+    omitting the panel.
+    """
+    if today is None:
+        today = date.today()
+    if now is None:
+        now = datetime.now()
+
+    theme = get_theme(settings, today)
+    img = Image.new("RGB", (width, height), theme.background)
+
+    # Scale the panel's base font to the frame so the single widget reads large
+    # rather than hugging one corner. Clamp so very small/large frames stay sane.
+    base_font_size = max(11, min(22, height // 16))
+
+    render_weather_panel(img, settings, theme, base_font_size, today, now)
+    return img
 
 
 def render(settings: Settings, today: Optional[date] = None,

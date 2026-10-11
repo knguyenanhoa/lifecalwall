@@ -14,7 +14,7 @@ preserve the pre-split module API (``renderer._blend`` etc.) so existing
 callers and tests keep working after the move.
 """
 
-from .core import render
+from .core import render, render_weather_only
 
 from .draw_utils import (
     RAMP_MIN_BRIGHTNESS as _RAMP_MIN_BRIGHTNESS,
@@ -57,4 +57,4 @@ from .weather_panel_text import (
     weather_condition as _weather_condition,
 )
 
-__all__ = ["render"]
+__all__ = ["render", "render_weather_only"]

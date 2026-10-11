@@ -4,7 +4,8 @@ settings_ui.py — Settings window for the life calendar wallpaper.
 Opens a small tkinter window that lets the user:
   • Set / edit their birthday
   • Choose a theme
-  • Adjust the update interval
+  • Toggle the grid labels and the weather panel
+  • Set the weather location, temperature unit, and rain display
   • Preview the calendar at thumbnail scale
   • Apply changes (re-render + set wallpaper) immediately
 """

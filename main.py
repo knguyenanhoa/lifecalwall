@@ -29,6 +29,7 @@ from config import (
     CONFIG_FILE,
     DATA_DIR,
     SETTINGS_SCRIPT,
+    WEATHER_SCRIPT,
     Settings,
     load_settings,
     save_settings,
@@ -199,6 +200,7 @@ def _run_rumps_app() -> None:
 
             self.menu = [
                 rumps.MenuItem("Open Settings", callback=self.open_settings),
+                rumps.MenuItem("Open Weather",  callback=self.open_weather),
                 rumps.MenuItem("Render Now",    callback=self.render_now),
                 None,
                 self._pause_item,
@@ -302,6 +304,13 @@ def _run_rumps_app() -> None:
                 close_fds=True,
             )
 
+        def open_weather(self, _sender) -> None:
+            # Launch the weather quick-view in its own process, same as settings.
+            subprocess.Popen(
+                [sys.executable, WEATHER_SCRIPT],
+                close_fds=True,
+            )
+
         def render_now(self, _sender) -> None:
             do_render()
 
@@ -373,6 +382,9 @@ def _run_tkinter_fallback() -> None:
     def open_settings_cmd():
         subprocess.Popen([sys.executable, SETTINGS_SCRIPT], close_fds=True)
 
+    def open_weather_cmd():
+        subprocess.Popen([sys.executable, WEATHER_SCRIPT], close_fds=True)
+
     def show_status():
         win = tk.Toplevel(root)
         win.title("Life Calendar")
@@ -387,6 +399,7 @@ def _run_tkinter_fallback() -> None:
         btn_frame.pack()
         for label, cmd in [
             ("Open Settings", open_settings_cmd),
+            ("Open Weather",  open_weather_cmd),
             ("Render Now",    do_render),
             ("Quit",          lambda: (stop_event.set(), root.destroy())),
         ]:

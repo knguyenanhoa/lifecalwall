@@ -170,6 +170,25 @@ def _paint_weather(
         _at(layout.footer, detail_font, label_color)
 
 
+def _fetch_report(settings: Settings):
+    """
+    Fetch the weather report for *settings*, returning None on any failure.
+
+    Imported lazily so a missing weather module or network stack can never
+    prevent a render.
+    """
+    try:
+        from weather import get_weather
+        return get_weather(
+            latitude=settings.weather_latitude,
+            longitude=settings.weather_longitude,
+            location=settings.weather_location,
+            fahrenheit=settings.weather_fahrenheit,
+        )
+    except Exception:
+        return None
+
+
 def draw_weather(
     draw: ImageDraw.ImageDraw,
     canvas_w: int, zone_y: int, zone_h: int,
@@ -185,19 +204,7 @@ def draw_weather(
     zone. If no weather data is available (offline with no cache), nothing is
     drawn.
     """
-    # Imported lazily so a missing weather module or network stack can never
-    # prevent the rest of the wallpaper from rendering.
-    try:
-        from weather import get_weather
-        report = get_weather(
-            latitude=settings.weather_latitude,
-            longitude=settings.weather_longitude,
-            location=settings.weather_location,
-            fahrenheit=settings.weather_fahrenheit,
-        )
-    except Exception:
-        report = None
-
+    report = _fetch_report(settings)
     if report is None:
         return
 
@@ -206,3 +213,49 @@ def draw_weather(
         settings, theme, base_font_size, today, now,
     )
     _paint_weather(draw, layout, theme, base_font_size)
+
+
+def render_weather_panel(
+    img,
+    settings: Settings,
+    theme: Theme,
+    base_font_size: int,
+    today: date,
+    now: datetime,
+) -> bool:
+    """
+    Draw the weather panel on its own, centered (both axes) in *img*.
+
+    Unlike draw_weather — which bottom-anchors the panel inside a wallpaper's
+    stats zone — this centers the standalone widget in the whole frame, for the
+    "Open Weather" quick view. Returns True if the panel was drawn, False when
+    there was no weather data (the caller leaves the background as-is).
+    """
+    report = _fetch_report(settings)
+    if report is None:
+        return False
+
+    draw = ImageDraw.Draw(img)
+    canvas_w, canvas_h = img.size
+
+    # Measure once by laying out as if the panel owned the whole frame, read
+    # back the pill's height, then re-lay-out into a zone that vertically
+    # centers that pill. build_weather_layout bottom-anchors within the zone
+    # with a fixed margin, so a zone of exactly (panel height + 2*margin)
+    # centred in the frame places the panel in the middle.
+    probe = build_weather_layout(
+        draw, report, canvas_w, 0, canvas_h,
+        settings, theme, base_font_size, today, now,
+    )
+    x0, y0, x1, y1 = probe.pill_box
+    panel_h = y1 - y0
+    margin = 18
+    zone_h = panel_h + 2 * margin
+    zone_y = max(0, (canvas_h - zone_h) // 2)
+
+    layout = build_weather_layout(
+        draw, report, canvas_w, zone_y, zone_h,
+        settings, theme, base_font_size, today, now,
+    )
+    _paint_weather(draw, layout, theme, base_font_size)
+    return True

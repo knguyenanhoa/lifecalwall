@@ -40,6 +40,37 @@ from .weather_panel_text import (
 RGB = Tuple[int, int, int]
 
 
+def _truncate_to_width(draw, text: str, font, max_width: int) -> str:
+    """
+    Return *text* shortened with a trailing "…" so it fits within *max_width*
+    pixels in *font*. Returns the text unchanged when it already fits (or when
+    max_width is non-positive, since there's nothing sensible to fit it to).
+    Whole words are dropped before falling back to trimming characters, so the
+    result still reads naturally.
+    """
+    if max_width <= 0 or text_size(draw, text, font)[0] <= max_width:
+        return text
+
+    ellipsis = "…"
+    # Prefer dropping whole trailing words first.
+    words = text.split(" ")
+    while len(words) > 1:
+        words.pop()
+        candidate = " ".join(words) + ellipsis
+        if text_size(draw, candidate, font)[0] <= max_width:
+            return candidate
+
+    # Still too wide (a single long word, or even one word won't fit): trim
+    # characters until the text plus the ellipsis fits.
+    base = words[0] if words else text
+    while base:
+        base = base[:-1]
+        candidate = base + ellipsis
+        if text_size(draw, candidate, font)[0] <= max_width:
+            return candidate
+    return ellipsis
+
+
 # ---------------------------------------------------------------------------
 # Positioned pieces — each carries the absolute coordinates the paint pass uses
 # ---------------------------------------------------------------------------
@@ -164,6 +195,12 @@ def build_weather_layout(
     row_gap = max(6, base_font_size // 2)
     column_gap = base_font_size * 4
 
+    # Block framing: the pill's inner padding and the gap from the zone edge.
+    # Defined here (not just at the anchor step) because the 7-day summary's
+    # width budget depends on the pad.
+    margin = 18
+    pad = 14
+
     unit = report.temperature_unit
     deg = unit[0] if unit else "°"
 
@@ -238,17 +275,9 @@ def build_weather_layout(
     uv_seg_h = max(8, detail_line_h + 4) if show_uv else 0
     uv_h = (uv_seg_h + 4 + detail_line_h) if show_uv else 0
 
-    week_w, week_h = tsize(week_text, detail_font) if week_text else (0, 0)
-
-    left_w = max(hero_w, uv_w, solar_w, week_w)
-    left_h = hero_h
-    if show_uv:
-        left_h += line_gap + uv_h
-    if solar_text:
-        left_h += line_gap + solar_h
-    if week_text:
-        left_h += line_gap + week_h
-
+    # The right column (forecast table) width is independent of the left
+    # column, so measure it first — it anchors how much room the left column,
+    # and the 7-day summary in particular, may use.
     col_gap = 10
     hour_icon_size = row_h + base_font_size // 2
     pie_d = row_h + base_font_size // 2
@@ -267,6 +296,31 @@ def build_weather_layout(
 
     right_w = forecast_w
     right_h = forecast_h
+
+    # The 7-day summary is a supplementary one-liner. Left unchecked, a long
+    # phrase widens the left column, pushes the forecast table right, and runs
+    # the whole block off the canvas edge — clipping the rain mm text. So the
+    # structural left-column width comes from the hero/UV/sun only, and the
+    # summary is capped to the horizontal room actually available: it may use
+    # up to the structural width, extended by whatever slack remains before the
+    # block would exceed the canvas (block = pad + left + column_gap + right +
+    # pad). On a wide display that lets the summary show in full; on a narrow
+    # one it is truncated with an ellipsis rather than overflowing.
+    structural_left_w = max(hero_w, uv_w, solar_w)
+    if week_text:
+        available = canvas_w - 2 * pad - column_gap - right_w
+        week_budget = max(structural_left_w, available)
+        week_text = _truncate_to_width(draw, week_text, detail_font, week_budget)
+    week_w, week_h = tsize(week_text, detail_font) if week_text else (0, 0)
+
+    left_w = max(structural_left_w, week_w)
+    left_h = hero_h
+    if show_uv:
+        left_h += line_gap + uv_h
+    if solar_text:
+        left_h += line_gap + solar_h
+    if week_text:
+        left_h += line_gap + week_h
 
     body_w = left_w + column_gap + right_w
     body_h = max(left_h, right_h)
@@ -295,8 +349,6 @@ def build_weather_layout(
         block_h += line_gap + footer_h
 
     # ---- Absolute anchors ---------------------------------------------------
-    margin = 18
-    pad = 14
     bx = (canvas_w - block_w) // 2
     by = zone_y + zone_h - block_h - margin
     pill_box = (bx - pad, by - pad, bx + block_w + pad, by + block_h + pad)
