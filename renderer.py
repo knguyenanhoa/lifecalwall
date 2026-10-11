@@ -470,17 +470,29 @@ def _weather_condition(code: Optional[int]) -> Tuple[str, str]:
     return "cloudy", "Cloudy"
 
 
+# WHO UV-index exposure bands: (upper_bound_exclusive, label, color). The last
+# band's bound is infinite. These drive both the text label and the segmented
+# UV bar, so the two always agree.
+_UV_BANDS = [
+    (3,            "Low",       (90, 190, 90)),
+    (6,            "Moderate",  (230, 200, 60)),
+    (8,            "High",      (235, 150, 50)),
+    (11,           "Very high", (220, 70, 60)),
+    (float("inf"), "Extreme",   (160, 90, 200)),
+]
+
+
+def _uv_band_index(uv: float) -> int:
+    """Index into _UV_BANDS for a UV value."""
+    for i, (upper, _label, _color) in enumerate(_UV_BANDS):
+        if uv < upper:
+            return i
+    return len(_UV_BANDS) - 1
+
+
 def _uv_label(uv: float) -> str:
-    """WHO UV-index exposure band for a UV value."""
-    if uv < 3:
-        return "Low"
-    if uv < 6:
-        return "Moderate"
-    if uv < 8:
-        return "High"
-    if uv < 11:
-        return "Very high"
-    return "Extreme"
+    """WHO UV-index exposure band label for a UV value."""
+    return _UV_BANDS[_uv_band_index(uv)][1]
 
 
 def _code_bucket(code: int) -> str:
@@ -741,6 +753,47 @@ def _draw_cloud(draw, x, y, w, h, color) -> None:
     draw.ellipse([x + w * 0.55, y + h * 0.32, x + w * 0.98, y + h * 0.82], fill=color)
 
 
+def _draw_uv_bar(draw, x, y, width, uv_value, detail_font, theme,
+                 center_label: bool = True) -> int:
+    """
+    Draw the UV widget at (x, y): a segmented bar with one segment per WHO UV
+    band, the current numeric value shown inside its band's segment, and the
+    band description underneath (centered, or left-aligned when
+    center_label is False). Returns the total height drawn.
+    """
+    n = len(_UV_BANDS)
+    seg_gap = 2
+    seg_h = max(8, _text_size(draw, "0", detail_font)[1] + 4)
+    seg_w = (width - (n - 1) * seg_gap) / n
+    active = _uv_band_index(uv_value)
+
+    for i, (_upper, _label, color) in enumerate(_UV_BANDS):
+        sx0 = x + i * (seg_w + seg_gap)
+        sx1 = sx0 + seg_w
+        # Inactive bands are dimmed toward the background; the active one is
+        # drawn at full strength so it stands out.
+        fill = color if i == active else _blend(theme.background, color, 0.35)
+        draw.rounded_rectangle([sx0, y, sx1, y + seg_h], radius=2, fill=fill)
+
+        if i == active:
+            val = f"{uv_value:.0f}"
+            vw, vh = _text_size(draw, val, detail_font)
+            # Pick black or white text for contrast against the band colour.
+            luma = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
+            txt_color = (20, 20, 20) if luma > 140 else (245, 245, 245)
+            draw.text((sx0 + (seg_w - vw) / 2, y + (seg_h - vh) / 2 - 1),
+                      val, fill=txt_color, font=detail_font)
+
+    # Band description under the bar.
+    label = f"UV  {_UV_BANDS[active][1]}"
+    lw, lh = _text_size(draw, label, detail_font)
+    label_y = y + seg_h + 4
+    label_x = x + (width - lw) / 2 if center_label else x
+    draw.text((label_x, label_y), label, fill=theme.label_color, font=detail_font)
+
+    return seg_h + 4 + lh
+
+
 def _draw_weather_icon(draw, key: str, x: int, y: int, size: int,
                        color, accent, bg) -> None:
     """
@@ -808,15 +861,14 @@ def _draw_weather(
     """
     Draw the weather block centered in the bottom zone. Layout:
 
-      • a full-width date line on top — Gregorian date plus a drawn crescent
-        moon and the lunar "DD Mon" date,
-      • a two-column body below it: the left column stacks the large current
-        temperature over the low/high, location, and the next sunrise/sunset;
-        the right column lists one row per upcoming hour (time, temperature,
-        rain outlook).
-
-    Splitting the body into columns widens the lower half so the block reads
-    as balanced rather than top-heavy.
+      • a date line on top — Gregorian date centered over the left column, a
+        moon-phase glyph aligned to the forecast column, and the lunar date,
+      • a two-column body (both anchored to the same top):
+          left  — a "current conditions" hero (condition icon beside the big
+                  temperature, with low/high under the temp and the condition
+                  word under the icon), then a UV bar, then the next sun event,
+          right — one row per upcoming hour, then the 7-day overview,
+      • a full-width footer — location · timezone.
 
     If no weather data is available (offline with no cache), nothing is drawn.
     """
@@ -837,7 +889,8 @@ def _draw_weather(
         return
 
     detail_font = _resolve_font(max(9, base_font_size - 1))
-    big_temp_font = _resolve_font(max(18, base_font_size * 2))
+    # Taller so the stacked low/high beside it reads as two balanced lines.
+    big_temp_font = _resolve_font(max(22, int(base_font_size * 2.6)))
 
     # Vertical rhythm — roomier than before so lines don't feel packed.
     line_gap = base_font_size          # gap between stacked lines
@@ -855,36 +908,36 @@ def _draw_weather(
     # Highlight observance days (2nd and 16th of the lunar month) with a box.
     lunar_boxed = lunar_day in (2, 16)
 
-    # Left column — big current temperature, then low/high, then location.
+    # Left column — a "current conditions" hero: condition icon beside the big
+    # temperature, with low/high under the temperature and the condition word
+    # under the icon. Then a UV row and a sun-event row beneath, left-aligned.
     temp_text = f"{report.temperature:.0f}{unit}"
-    lowhigh_text = ""
-    low_text = high_text = lh_sep = ""
-    if report.temp_low is not None and report.temp_high is not None:
-        low_text = f"L {report.temp_low:.0f}{deg}"
-        high_text = f"H {report.temp_high:.0f}{deg}"
-        lh_sep = "    "
-        lowhigh_text = f"{low_text}{lh_sep}{high_text}"
-    place_text = report.location or ""
+    # Split label from number so the numbers can be right-aligned as a column.
+    high_num = low_num = ""
+    has_lowhigh = report.temp_low is not None and report.temp_high is not None
+    if has_lowhigh:
+        high_num = f"{report.temp_high:.0f}{deg}"
+        low_num = f"{report.temp_low:.0f}{deg}"
+
+    # Location and timezone sit on a full-width footer, e.g.
+    # "Ho Chi Minh City  ·  GMT+7".
+    place = report.location or ""
     gmt = _format_gmt_offset(report.utc_offset_seconds)
-    if place_text and gmt:
-        place_text = f"{place_text} ({gmt})"
-    elif gmt:
-        place_text = f"({gmt})"
+    tz = f"GMT{gmt}" if gmt else ""
+    footer_text = "  ·  ".join(t for t in (place, tz) if t)
 
     # Next solar event (sunrise before dawn, sunset by day, tomorrow's sunrise
     # after dusk).
     solar = _next_solar_event(report, now)
-    solar_text = f"{solar[0]} {solar[1]}" if solar else ""
+    solar_text = f"{solar[0]}  {solar[1]}" if solar else ""
 
-    # Current condition (icon + label) and UV. The condition label and UV
-    # share one line to keep the left column from growing too tall.
-    icon_key, condition_label = _weather_condition(report.weather_code)
-    icon_size = max(20, base_font_size * 2)   # drawn above the temperature
-    uv_value = report.uv_index_max if report.uv_index_max is not None else report.uv_index
-    uv_text = f"UV {uv_value:.0f} {_uv_label(uv_value)}" if uv_value is not None else ""
-    info_text = "  ·  ".join(t for t in (condition_label, uv_text) if t)
+    icon_key, _condition_label = _weather_condition(report.weather_code)
 
-    # Running 7-day overview — one-line footer spanning the full block width.
+    # UV: live current value preferred, daily peak as fallback.
+    uv_value = report.uv_index if report.uv_index is not None else report.uv_index_max
+    show_uv = uv_value is not None
+
+    # Running 7-day overview — shown under the forecast table.
     week_summary = _summarize_week(report.weekly_codes)
     week_text = f"7-day: {week_summary}" if week_summary else ""
 
@@ -907,28 +960,54 @@ def _draw_weather(
     date_line_w = greg_w + date_sep_w + moon_w + lunar_w
     date_line_h = max(date_h, lunar_h, 2 * moon_r if lunar else 0)
 
+    detail_line_h = _text_size(draw, "Ag", detail_font)[1]
     temp_w, temp_h = _text_size(draw, temp_text, big_temp_font)
-    lowhigh_w, lowhigh_h = _text_size(draw, lowhigh_text, detail_font) if lowhigh_text else (0, 0)
-    place_w, place_h = _text_size(draw, place_text, detail_font) if place_text else (0, 0)
+    # Low/high as a two-row mini-table: "H"/"L" labels left, numbers right-aligned.
+    lh_label_w = max(_text_size(draw, "H", detail_font)[0],
+                     _text_size(draw, "L", detail_font)[0]) if has_lowhigh else 0
+    high_num_w, high_h = _text_size(draw, high_num, detail_font) if has_lowhigh else (0, 0)
+    low_num_w, low_h = _text_size(draw, low_num, detail_font) if has_lowhigh else (0, 0)
+    lh_num_w = max(high_num_w, low_num_w)
+    lh_label_num_gap = base_font_size // 2  # gap between label and number
     solar_w, solar_h = _text_size(draw, solar_text, detail_font) if solar_text else (0, 0)
-    info_w, info_h = _text_size(draw, info_text, detail_font) if info_text else (0, 0)
     has_icon = icon_key != "unknown"
     _, row_h = _text_size(draw, "0:00", detail_font)
 
-    # Left column geometry — condition icon on top, then the temperature stack,
-    # low/high, the condition+UV info line, location, and the next sun event.
-    left_w = max(temp_w, lowhigh_w, place_w, solar_w, info_w, icon_size if has_icon else 0)
-    left_h = temp_h
-    if has_icon:
-        left_h += icon_size + line_gap // 2
-    if lowhigh_text:
-        left_h += line_gap // 2 + lowhigh_h
-    if info_text:
-        left_h += line_gap // 2 + info_h
-    if place_text:
-        left_h += line_gap // 2 + place_h
+    # Hero condition icon, sized a touch larger than the temperature so its
+    # (lower-weighted) cloud glyph reads as vertically centered.
+    icon_size = int(temp_h * 1.5) if has_icon else 0
+    icon_block_w = icon_size
+
+    # ---- Hero block: [icon] [big temperature] [low/high table] -------------
+    hero_gap = base_font_size              # gap between icon and temperature
+    lh_line_gap = max(2, line_gap // 3)    # gap between the stacked H and L rows
+    lowhigh_w = lh_label_w + lh_label_num_gap + lh_num_w
+    lowhigh_h = (high_h + lh_line_gap + low_h) if has_lowhigh else 0
+    lowhigh_gap = base_font_size // 2      # gap between temp and the L/H table
+
+    hero_h = max(temp_h, lowhigh_h, icon_size)
+    hero_w = (icon_block_w + (hero_gap if has_icon else 0)
+              + temp_w + (lowhigh_gap + lowhigh_w if has_lowhigh else 0))
+
+    # ---- UV widget: a segmented bar with its band description beneath -------
+    # Widen it so its right edge lines up roughly with the hero's right edge
+    # (the right edge of the low/high numbers).
+    uv_w = max(base_font_size * 10, hero_w) if show_uv else 0
+    uv_seg_h = max(8, detail_line_h + 4) if show_uv else 0
+    uv_h = (uv_seg_h + 4 + detail_line_h) if show_uv else 0  # bar + description
+
+    # 7-day overview lives at the bottom of the left column.
+    week_w, week_h = _text_size(draw, week_text, detail_font) if week_text else (0, 0)
+
+    # Left column geometry — hero, UV, sun event, then 7-day (all left-aligned).
+    left_w = max(hero_w, uv_w, solar_w, week_w)
+    left_h = hero_h
+    if show_uv:
+        left_h += line_gap + uv_h
     if solar_text:
-        left_h += line_gap // 2 + solar_h
+        left_h += line_gap + solar_h
+    if week_text:
+        left_h += line_gap + week_h
 
     # Right column (forecast table) geometry. A small condition icon leads
     # each row, followed by the time, temperature, and rain columns.
@@ -945,24 +1024,51 @@ def _draw_weather(
         rain_col_w = pie_d + (pie_gap + rain_text_w if rain_text_w else 0)
     else:
         rain_col_w = rain_text_w
-    right_w = (hour_icon_size + col_gap + time_col_w + col_gap
-               + temp_col_w + col_gap + rain_col_w)
+    forecast_w = (hour_icon_size + col_gap + time_col_w + col_gap
+                  + temp_col_w + col_gap + rain_col_w)
     # Rows are as tall as their tallest element (icon, and the pie in pie mode)
     # so nothing is clipped.
     hour_row_h = max(row_h, hour_icon_size, pie_d if rain_as_pie else 0)
-    right_h = len(rows) * hour_row_h + max(0, len(rows) - 1) * row_gap
+    forecast_h = len(rows) * hour_row_h + max(0, len(rows) - 1) * row_gap
+
+    # The right column is just the forecast table now; the 7-day overview has
+    # moved to the bottom of the left column.
+    right_w = forecast_w
+    right_h = forecast_h
 
     # The two columns sit side by side; the body is as tall as the taller one.
     body_w = left_w + column_gap + right_w
     body_h = max(left_h, right_h)
 
-    # Weekly overview footer, spanning the full width under the body.
-    week_w, week_h = _text_size(draw, week_text, detail_font) if week_text else (0, 0)
+    # To keep the two columns the same height (so neither looks jagged when
+    # content is added to the other), each column justifies its rows to fill
+    # body_h: the leftover height is distributed evenly across its inter-row
+    # gaps. _justified_gap never returns less than the column's base gap.
+    def _justified_gap(content_h: int, n_gaps: int, base_gap: int) -> int:
+        if n_gaps <= 0:
+            return base_gap
+        return max(base_gap, (body_h - content_h) // n_gaps)
 
-    block_w = max(date_line_w, body_w, week_w)
-    block_h = date_line_h + line_gap + body_h
+    # Left column rows: hero, then UV / sun / 7-day if present.
+    left_row_heights = [hero_h]
+    if show_uv:
+        left_row_heights.append(uv_h)
+    if solar_text:
+        left_row_heights.append(solar_h)
     if week_text:
-        block_h += line_gap + week_h
+        left_row_heights.append(week_h)
+    left_gap = _justified_gap(sum(left_row_heights), len(left_row_heights) - 1, line_gap)
+
+    # Right column rows: the forecast hours.
+    right_gap = _justified_gap(len(rows) * hour_row_h, max(0, len(rows) - 1), row_gap)
+
+    # Location + timezone footer, spanning the full block width below the body.
+    footer_w, footer_h = _text_size(draw, footer_text, detail_font) if footer_text else (0, 0)
+
+    block_w = max(date_line_w, body_w, footer_w)
+    block_h = date_line_h + line_gap + body_h
+    if footer_text:
+        block_h += line_gap + footer_h
 
     # Center the block horizontally in the bottom zone; keep it near the
     # bottom edge like the stats pill on the right.
@@ -1020,44 +1126,65 @@ def _draw_weather(
         _text_at(gregorian, detail_font, bx + (block_w - greg_w) // 2, date_y,
                  theme.label_color)
 
-    # ---- Body: two columns, each vertically centered within the body --------
+    # ---- Body: two columns, both anchored to the same top -------------------
     body_y = by + date_line_h + line_gap
     left_x = bx + (block_w - body_w) // 2
     right_x = left_x + left_w + column_gap
-
-    # Left column — condition icon, then temperature stack.
-    ly = body_y + (body_h - left_h) // 2
     icon_accent = _blend(theme.elapsed_period_colors[1], (255, 255, 255), 0.3)
+
+    # Left column — left-aligned hero (icon | temp stack), then UV, then sun.
+    ly = body_y
+
+    # Hero: [icon] [big temp] [H/L stacked]. Each piece is vertically centered
+    # within hero_h. The icon's vector glyphs carry a small internal left
+    # margin, so nudge it left to visually align its edge with left_x (and the
+    # UV bar below it).
     if has_icon:
-        _draw_weather_icon(draw, icon_key,
-                           left_x + (left_w - icon_size) // 2, ly, icon_size,
+        icon_inset = int(icon_size * 0.05)
+        # The icon's ink sits in the upper part of its box (the cloud occupies
+        # only the top ~60%), so nudge it down to look optically centered.
+        icon_y = ly + (hero_h - icon_size) // 2 + int(icon_size * 0.15)
+        _draw_weather_icon(draw, icon_key, left_x - icon_inset, icon_y, icon_size,
                            bright, icon_accent, pill_color)
-        ly += icon_size + line_gap // 2
-    _centered_in(temp_text, big_temp_font, left_x, left_w, ly, bright)
-    ly += temp_h
-    if lowhigh_text:
-        ly += line_gap // 2
-        # Colour the low/high with the same ramp used for the hourly temps:
-        # the low sits at the dark end, the high at the light end, so the two
-        # anchor what "darkest" and "lightest" mean for the column.
-        low_w, _ = _text_size(draw, low_text, detail_font)
-        sep_w, _ = _text_size(draw, lh_sep, detail_font)
-        group_w, _ = _text_size(draw, lowhigh_text, detail_font)
-        gx = left_x + (left_w - group_w) // 2
-        _text_at(low_text, detail_font, gx, ly, _ramp_color(theme, 0.0))
-        _text_at(high_text, detail_font, gx + low_w + sep_w, ly, _ramp_color(theme, 1.0))
-        ly += lowhigh_h
-    if info_text:
-        ly += line_gap // 2
-        _centered_in(info_text, detail_font, left_x, left_w, ly, theme.label_color)
-        ly += info_h
-    if place_text:
-        ly += line_gap // 2
-        _centered_in(place_text, detail_font, left_x, left_w, ly, theme.label_color)
-        ly += place_h
+
+    temp_x = left_x + (icon_block_w + hero_gap if has_icon else 0)
+    temp_y = ly + (hero_h - temp_h) // 2
+    _text_at(temp_text, big_temp_font, temp_x, temp_y, bright)
+
+    if has_lowhigh:
+        # Two-row table: "H"/"L" labels left-aligned, numbers right-aligned to
+        # a shared right edge (lh_x + lowhigh_w).
+        lh_x = temp_x + temp_w + lowhigh_gap
+        lh_right = lh_x + lowhigh_w
+        lh_y = ly + (hero_h - lowhigh_h) // 2
+        # High row (light end of the ramp).
+        _text_at("H", detail_font, lh_x, lh_y, _ramp_color(theme, 1.0))
+        _text_at(high_num, detail_font, lh_right - high_num_w, lh_y,
+                 _ramp_color(theme, 1.0))
+        # Low row (dark end of the ramp).
+        low_y = lh_y + high_h + lh_line_gap
+        _text_at("L", detail_font, lh_x, low_y, _ramp_color(theme, 0.0))
+        _text_at(low_num, detail_font, lh_right - low_num_w, low_y,
+                 _ramp_color(theme, 0.0))
+    ly += hero_h
+
+    # UV widget, left-aligned under the hero.
+    if show_uv:
+        ly += left_gap
+        _draw_uv_bar(draw, left_x, ly, uv_w, uv_value, detail_font, theme,
+                     center_label=False)
+        ly += uv_h
+
+    # Next sun event, left-aligned.
     if solar_text:
-        ly += line_gap // 2
-        _centered_in(solar_text, detail_font, left_x, left_w, ly, bright)
+        ly += left_gap
+        _text_at(solar_text, detail_font, left_x, ly, bright)
+        ly += solar_h
+
+    # 7-day overview, left-aligned at the bottom of the left column.
+    if week_text:
+        ly += left_gap
+        _text_at(week_text, detail_font, left_x, ly, bright)
 
     # Right column — forecast table. Temperature and rain figures are tinted
     # by brightness: hotter/wetter reads lighter, cooler/drier reads darker.
@@ -1078,7 +1205,7 @@ def _draw_weather(
     time_x = icon_x + hour_icon_size + col_gap
     temp_x = time_x + time_col_w + col_gap
     rain_x = temp_x + temp_col_w + col_gap
-    ry = body_y + (body_h - right_h) // 2
+    ry = body_y   # both columns share the same top
     for (time_lbl, temp_lbl, rain_lbl), hour in zip(rows, report.hours):
         temp_color = _ramp_color(theme, (hour.temperature - t_min) / t_span)
         rain_color = _ramp_color(theme, hour.precip_probability / 100.0)
@@ -1103,12 +1230,13 @@ def _draw_weather(
                          rain_color)
         else:
             _text_at(rain_lbl, detail_font, rain_x, text_y, rain_color)
-        ry += hour_row_h + row_gap
+        ry += hour_row_h + right_gap
 
-    # ---- Weekly overview footer (full width, centered) ----------------------
-    if week_text:
-        week_y = body_y + body_h + line_gap
-        _centered_in(week_text, detail_font, bx, block_w, week_y, bright)
+    # ---- Location + timezone footer (full width, centered) ------------------
+    if footer_text:
+        footer_y = by + block_h - footer_h
+        _centered_in(footer_text, detail_font, bx, block_w, footer_y,
+                     theme.label_color)
 
 
 # ---------------------------------------------------------------------------
