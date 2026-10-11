@@ -248,7 +248,6 @@ def reload_themes() -> None:
 class Settings:
     birthday: str = "2000-01-01"
     theme: str = "gradient_crimson"
-    update_interval_seconds: int = 3600
     canvas_width: int = 0
     canvas_height: int = 0
     padding_top: int = 80

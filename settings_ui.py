@@ -127,18 +127,6 @@ class SettingsWindow:
         theme_combo.set(self._settings.theme)
         self._theme_var.trace_add("write", lambda *_: self._schedule_preview())
 
-        # ---- Update interval -------------------------------------------
-        tk.Label(frm, text="Update interval (min):", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=3, column=0, sticky="w", pady=4,
-        )
-        self._interval_var = tk.IntVar(value=self._settings.update_interval_seconds // 60)
-        interval_spin = tk.Spinbox(
-            frm, from_=1, to=1440, textvariable=self._interval_var, width=6,
-            bg=ENTRY_BG, fg=ENTRY_FG, buttonbackground=ENTRY_BG,
-            insertbackground=ENTRY_FG, relief="flat",
-        )
-        interval_spin.grid(row=3, column=1, sticky="w", pady=4, padx=(8, 0))
-
         # ---- Show labels toggles ----------------------------------------
         self._show_year_var  = tk.BooleanVar(value=self._settings.show_year_labels)
         self._show_week_var  = tk.BooleanVar(value=self._settings.show_week_labels)
@@ -148,15 +136,15 @@ class SettingsWindow:
         tk.Checkbutton(
             frm, text="Show year labels", variable=self._show_year_var,
             command=self._schedule_preview, **chk_style,
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=2)
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2)
         tk.Checkbutton(
             frm, text="Show week labels", variable=self._show_week_var,
             command=self._schedule_preview, **chk_style,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=2)
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=2)
 
         # ---- Weather separator ------------------------------------------
         tk.Frame(frm, bg="#45475a", height=1).grid(
-            row=6, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
+            row=5, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
         )
 
         # ---- Weather: show toggle ---------------------------------------
@@ -164,11 +152,11 @@ class SettingsWindow:
         tk.Checkbutton(
             frm, text="Show weather", variable=self._show_weather_var,
             command=self._schedule_preview, **chk_style,
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=2)
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=2)
 
         # ---- Weather: location ------------------------------------------
         tk.Label(frm, text="Location:", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=8, column=0, sticky="w", pady=4,
+            row=7, column=0, sticky="w", pady=4,
         )
         self._location_var = tk.StringVar(value=self._settings.weather_location)
         location_entry = tk.Entry(
@@ -176,20 +164,20 @@ class SettingsWindow:
             bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=ENTRY_FG,
             relief="flat", bd=4,
         )
-        location_entry.grid(row=8, column=1, sticky="w", pady=4, padx=(8, 0))
+        location_entry.grid(row=7, column=1, sticky="w", pady=4, padx=(8, 0))
         tk.Label(
             frm, text="blank → Ho Chi Minh City", bg="#1e1e2e", fg="#7f849c",
             font=("Helvetica", 9),
-        ).grid(row=8, column=2, sticky="w", padx=(6, 0))
+        ).grid(row=7, column=2, sticky="w", padx=(6, 0))
         self._location_var.trace_add("write", lambda *_: self._schedule_preview())
 
         # ---- Weather: temperature unit ----------------------------------
         tk.Label(frm, text="Temperature unit:", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=9, column=0, sticky="w", pady=4,
+            row=8, column=0, sticky="w", pady=4,
         )
         self._fahrenheit_var = tk.BooleanVar(value=self._settings.weather_fahrenheit)
         unit_frame = tk.Frame(frm, bg="#1e1e2e")
-        unit_frame.grid(row=9, column=1, columnspan=2, sticky="w", pady=4, padx=(8, 0))
+        unit_frame.grid(row=8, column=1, columnspan=2, sticky="w", pady=4, padx=(8, 0))
         radio_style = {"bg": "#1e1e2e", "fg": LABEL_FG, "activebackground": "#1e1e2e",
                        "selectcolor": ENTRY_BG, "relief": "flat"}
         tk.Radiobutton(
@@ -203,11 +191,11 @@ class SettingsWindow:
 
         # ---- Weather: rain display --------------------------------------
         tk.Label(frm, text="Rain chance:", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=10, column=0, sticky="w", pady=4,
+            row=9, column=0, sticky="w", pady=4,
         )
         self._rain_as_pie_var = tk.BooleanVar(value=self._settings.weather_rain_as_pie)
         rain_frame = tk.Frame(frm, bg="#1e1e2e")
-        rain_frame.grid(row=10, column=1, columnspan=2, sticky="w", pady=4, padx=(8, 0))
+        rain_frame.grid(row=9, column=1, columnspan=2, sticky="w", pady=4, padx=(8, 0))
         tk.Radiobutton(
             rain_frame, text="Pie chart", variable=self._rain_as_pie_var, value=True,
             command=self._schedule_preview, **radio_style,
@@ -219,25 +207,25 @@ class SettingsWindow:
 
         # ---- Separator --------------------------------------------------
         tk.Frame(frm, bg="#45475a", height=1).grid(
-            row=11, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
+            row=10, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
         )
 
         # ---- Preview canvas ---------------------------------------------
         tk.Label(frm, text="Preview:", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=12, column=0, sticky="nw", pady=(0, 4),
+            row=11, column=0, sticky="nw", pady=(0, 4),
         )
         self._preview_canvas = tk.Canvas(
             frm, width=PREVIEW_W, height=PREVIEW_H,
             bg="#000000", highlightthickness=0,
         )
         self._preview_canvas.grid(
-            row=13, column=0, columnspan=3, pady=(0, PAD),
+            row=12, column=0, columnspan=3, pady=(0, PAD),
         )
         self._preview_img_ref: Optional[ImageTk.PhotoImage] = None  # keep ref alive
 
         # ---- Buttons ----------------------------------------------------
         btn_frame = tk.Frame(frm, bg="#1e1e2e")
-        btn_frame.grid(row=14, column=0, columnspan=3, sticky="e")
+        btn_frame.grid(row=13, column=0, columnspan=3, sticky="e")
 
         tk.Button(
             btn_frame, text="Apply", command=self._on_apply_click,
@@ -321,14 +309,9 @@ class SettingsWindow:
         else:
             self._bday_hint.config(text="")
 
-        interval_min = self._interval_var.get()
-        if interval_min < 1:
-            interval_min = 1
-
         return Settings(
             birthday=birthday_str,
             theme=self._theme_var.get(),
-            update_interval_seconds=interval_min * 60,
             canvas_width=self._settings.canvas_width,
             canvas_height=self._settings.canvas_height,
             padding_top=self._settings.padding_top,

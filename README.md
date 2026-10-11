@@ -56,7 +56,6 @@ Open it any time by:
 |---|---|
 | Birthday | Your date of birth (`YYYY-MM-DD`). Drives the elapsed-week calculation. |
 | Theme | Visual theme (see [Themes](#themes)). |
-| Update interval | How often the wallpaper is re-rendered (minutes). Default: 60. |
 | Show year labels | Toggle the year axis labels. |
 | Show week labels | Toggle the week axis labels. |
 | Show weather | Toggle the weather panel in the bottom zone. |
@@ -95,7 +94,6 @@ Stored at `~/.lifecal/config.json`. You can edit it directly; the app picks up c
 {
   "birthday": "1990-05-15",
   "theme": "gradient_crimson",
-  "update_interval_seconds": 3600,
   "canvas_width": 0,
   "canvas_height": 0,
   "padding_top": 80,
