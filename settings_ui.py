@@ -76,14 +76,38 @@ class SettingsWindow:
 
         style = ttk.Style()
         style.theme_use("clam")
+        # A dedicated style name so we don't fight other ttk defaults, and so
+        # the mappings below apply only to our dark combobox.
         style.configure(
-            "TCombobox",
+            "Dark.TCombobox",
             fieldbackground=ENTRY_BG,
             background=ENTRY_BG,
             foreground=ENTRY_FG,
+            arrowcolor=ENTRY_FG,
             selectbackground=ENTRY_BG,
             selectforeground=ENTRY_FG,
         )
+        # A readonly combobox draws its text from the *state map*, not the base
+        # foreground. Without this, macOS renders the readonly field with a
+        # near-white foreground on our dark field, making the text invisible.
+        # Pin the field background and text colour across every relevant state.
+        style.map(
+            "Dark.TCombobox",
+            fieldbackground=[("readonly", ENTRY_BG), ("disabled", ENTRY_BG),
+                             ("active", ENTRY_BG)],
+            foreground=[("readonly", ENTRY_FG), ("disabled", ENTRY_FG),
+                        ("active", ENTRY_FG)],
+            selectbackground=[("readonly", ENTRY_BG)],
+            selectforeground=[("readonly", ENTRY_FG)],
+            arrowcolor=[("readonly", ENTRY_FG), ("active", ENTRY_FG)],
+        )
+        # The dropdown list that opens is a separate Tk Listbox whose colours
+        # come from the option database, not the ttk style — set them here so
+        # the popup matches the dark field instead of showing as white-on-white.
+        root.option_add("*TCombobox*Listbox.background", ENTRY_BG)
+        root.option_add("*TCombobox*Listbox.foreground", ENTRY_FG)
+        root.option_add("*TCombobox*Listbox.selectBackground", BTN_BG)
+        root.option_add("*TCombobox*Listbox.selectForeground", BTN_FG)
 
         # ---- Main frame ------------------------------------------------
         frm = tk.Frame(root, bg="#1e1e2e", padx=PAD, pady=PAD)
@@ -120,6 +144,7 @@ class SettingsWindow:
         theme_combo = ttk.Combobox(
             frm, textvariable=self._theme_var,
             values=list_theme_names(), state="readonly", width=20,
+            style="Dark.TCombobox",
         )
         theme_combo.grid(row=2, column=1, sticky="w", pady=4, padx=(8, 0))
         # Explicitly set the displayed value — on some macOS Tk builds the
