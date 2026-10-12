@@ -102,6 +102,73 @@ def uv_label(uv: float) -> str:
     return UV_BANDS[uv_band_index(uv)][1]
 
 
+# Planetary K-index (geomagnetic activity) bands, keyed to NOAA's G-scale.
+# (upper_bound_exclusive, label, color). Kp runs 0–9. Below Kp5 is "quiet"
+# through "unsettled" (no storm, G0); Kp5+ maps to geomagnetic storm levels
+# G1–G5. The colours deepen with intensity like the UV ramp, so the segmented
+# bar reads at a glance and agrees with the text label.
+KP_BANDS = [
+    (5,            "Quiet",       (90, 150, 200)),   # Kp 0–4  (G0)
+    (6,            "G1 Minor",    (90, 190, 90)),    # Kp 5
+    (7,            "G2 Moderate", (230, 200, 60)),   # Kp 6
+    (8,            "G3 Strong",   (235, 150, 50)),   # Kp 7
+    (9,            "G4 Severe",   (220, 70, 60)),    # Kp 8
+    (float("inf"), "G5 Extreme",  (160, 90, 200)),   # Kp 9
+]
+
+
+def kp_band_index(kp: float) -> int:
+    """Index into KP_BANDS for a Kp value."""
+    for i, (upper, _label, _color) in enumerate(KP_BANDS):
+        if kp < upper:
+            return i
+    return len(KP_BANDS) - 1
+
+
+def kp_label(kp: float) -> str:
+    """Geomagnetic-activity band label for a Kp value."""
+    return KP_BANDS[kp_band_index(kp)][1]
+
+
+def aurora_outlook(kp: float) -> str:
+    """
+    A short, plain-language aurora prospect for a Kp value. Higher Kp pushes
+    the auroral oval toward lower (more equatorward) latitudes, so the phrasing
+    escalates from "unlikely" to visibility well away from the poles.
+    """
+    if kp < 3:
+        return "Aurora unlikely"
+    if kp < 5:
+        return "Aurora at high latitudes"
+    if kp < 7:
+        return "Aurora possible mid-latitudes"
+    return "Aurora far from poles"
+
+
+# NOAA R-scale (radio blackouts, driven by solar flares) → plain-language
+# solar-activity label. R0 means no blackout, i.e. a calm Sun; R1–R5 escalate.
+_R_SCALE_LABELS = {
+    0: "Quiet",
+    1: "Minor flares",
+    2: "Moderate flares",
+    3: "Strong flares",
+    4: "Severe flares",
+    5: "Extreme flares",
+}
+
+
+def solar_activity_outlook(r_scale: Optional[int]) -> str:
+    """
+    A short solar-activity line from the NOAA R-scale, in the same spirit as
+    the aurora outlook, e.g. "Sun: quiet" or "Sun: strong flares". Returns ""
+    when the scale is unknown so the caller can omit the line.
+    """
+    if r_scale is None:
+        return ""
+    label = _R_SCALE_LABELS.get(int(r_scale), "active")
+    return f"Sun: {label.lower()}"
+
+
 def code_bucket(code: int) -> str:
     """Collapse a WMO code into a coarse weekly-summary bucket."""
     if code in (0, 1):

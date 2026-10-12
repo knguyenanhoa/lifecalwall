@@ -28,10 +28,12 @@ from config import Settings, Theme
 
 from .draw_utils import resolve_font, text_size
 from .weather_panel_text import (
+    aurora_outlook,
     format_dates,
     format_gmt_offset,
     format_hour_rain,
     next_solar_event,
+    solar_activity_outlook,
     summarize_week,
     uv_band_index,
     weather_condition,
@@ -126,6 +128,32 @@ class UVBar:
 
 
 @dataclass
+class KpBar:
+    """The segmented Kp (geomagnetic) widget's placement, UV-bar style."""
+    x: int
+    y: int
+    width: int
+    value: float
+
+
+@dataclass
+class SpaceColumn:
+    """
+    The optional space-weather column (leftmost): a heading, the Kp bar, and a
+    stack of one-line readouts (aurora, solar activity, solar cycle, planets,
+    conjunction). All positions absolute; present only when enabled. Each text
+    line is optional so the column collapses cleanly when data is missing.
+    """
+    heading: TextPiece
+    kp_bar: KpBar
+    aurora: Optional[TextPiece] = None
+    solar_activity: Optional[TextPiece] = None
+    solar_cycle: Optional[TextPiece] = None
+    planets: Optional[TextPiece] = None
+    conjunction: Optional[TextPiece] = None
+
+
+@dataclass
 class ForecastRow:
     """One hourly forecast row with each cell positioned absolutely."""
     icon_key: str
@@ -156,8 +184,10 @@ class WeatherLayout:
 
     uv_bar: Optional[UVBar] = None
     solar: Optional[TextPiece] = None
+    daylen: Optional[TextPiece] = None
     week: Optional[TextPiece] = None
     footer: Optional[TextPiece] = None
+    space: Optional[SpaceColumn] = None
 
     rain_as_pie: bool = True
 
@@ -223,11 +253,29 @@ def build_weather_layout(
     solar = next_solar_event(report, now)
     solar_text = f"{solar[0]}  {solar[1]}" if solar else ""
 
+    # Day length for the current day, shown under the sun event in the main
+    # column. Derived from today's sunrise/sunset the report already carries.
+    import astro
+    daylen = astro.day_length_text(report.sunrise_today, report.sunset_today)
+    daylen_text = f"Daylight  {daylen}" if daylen else ""
+
     icon_key, _ = weather_condition(report.weather_code)
     has_icon = icon_key != "unknown"
 
     uv_value = report.uv_index if report.uv_index is not None else report.uv_index_max
     show_uv = uv_value is not None
+
+    # Space weather: show the column only when the setting is on AND we have a
+    # Kp value (the fetch may have failed or the cache may predate the field).
+    kp_value = report.kp_index if report.kp_index is not None else report.kp_forecast_max
+    show_space = bool(getattr(settings, "show_space_weather", False)) and kp_value is not None
+    space_heading_text = "Space weather" if show_space else ""
+    aurora_text = aurora_outlook(kp_value) if show_space else ""
+    # Extra space-weather lines (any may be blank → omitted from the column).
+    solar_activity_text = solar_activity_outlook(report.r_scale) if show_space else ""
+    solar_cycle_text = astro.solar_cycle_text(today) if show_space else ""
+    planets_text = astro.planets_text(now) if show_space else ""
+    conjunction_text = astro.conjunction_text(now) if show_space else ""
 
     week_summary = summarize_week(report.weekly_codes)
     week_text = f"7-day: {week_summary}" if week_summary else ""
@@ -256,6 +304,7 @@ def build_weather_layout(
     lh_num_w = max(high_num_w, low_num_w)
     lh_label_num_gap = base_font_size // 2
     solar_w, solar_h = tsize(solar_text, detail_font) if solar_text else (0, 0)
+    daylen_w, daylen_h = tsize(daylen_text, detail_font) if daylen_text else (0, 0)
     _, row_h = tsize("0:00", detail_font)
 
     icon_size = int(temp_h * 1.5) if has_icon else 0
@@ -274,6 +323,36 @@ def build_weather_layout(
     uv_w = max(base_font_size * 10, hero_w) if show_uv else 0
     uv_seg_h = max(8, detail_line_h + 4) if show_uv else 0
     uv_h = (uv_seg_h + 4 + detail_line_h) if show_uv else 0
+
+    # Space-weather column: a heading, a Kp segmented bar (same build as the UV
+    # bar — one segment per band, value + label), then a stack of one-line
+    # readouts (aurora, solar activity, solar cycle, planets, conjunction).
+    # Blank lines are dropped so the column collapses cleanly.
+    space_seg_h = max(8, detail_line_h + 4) if show_space else 0
+    kp_bar_h = (space_seg_h + 4 + detail_line_h) if show_space else 0  # bar + label
+    space_head_w, space_head_h = tsize(space_heading_text, detail_font) if show_space else (0, 0)
+    # The text lines below the Kp bar, in display order, keyed so the paint
+    # pass can place each into the right SpaceColumn slot.
+    space_lines = []
+    if show_space:
+        for key, txt in (("aurora", aurora_text),
+                         ("solar_activity", solar_activity_text),
+                         ("solar_cycle", solar_cycle_text),
+                         ("planets", planets_text),
+                         ("conjunction", conjunction_text)):
+            if txt:
+                lw, lh = tsize(txt, detail_font)
+                space_lines.append((key, txt, lw, lh))
+    # Width is driven by the widest line; give the Kp bar a sensible minimum so
+    # its six segments stay legible, matching the UV bar's floor.
+    space_lines_w = max((lw for _k, _t, lw, _lh in space_lines), default=0)
+    space_w = max(space_head_w, space_lines_w, base_font_size * 10) if show_space else 0
+    if show_space:
+        space_h = space_head_h + line_gap + kp_bar_h
+        for _k, _t, _lw, lh in space_lines:
+            space_h += line_gap + lh
+    else:
+        space_h = 0
 
     # The right column (forecast table) width is independent of the left
     # column, so measure it first — it anchors how much room the left column,
@@ -306,9 +385,13 @@ def build_weather_layout(
     # block would exceed the canvas (block = pad + left + column_gap + right +
     # pad). On a wide display that lets the summary show in full; on a narrow
     # one it is truncated with an ellipsis rather than overflowing.
-    structural_left_w = max(hero_w, uv_w, solar_w)
+    # The optional space column (plus its gap) also eats horizontal room, so
+    # fold it into the slack the 7-day summary may use before overflow.
+    space_prefix_w = (space_w + column_gap) if show_space else 0
+
+    structural_left_w = max(hero_w, uv_w, solar_w, daylen_w)
     if week_text:
-        available = canvas_w - 2 * pad - column_gap - right_w
+        available = canvas_w - 2 * pad - space_prefix_w - column_gap - right_w
         week_budget = max(structural_left_w, available)
         week_text = _truncate_to_width(draw, week_text, detail_font, week_budget)
     week_w, week_h = tsize(week_text, detail_font) if week_text else (0, 0)
@@ -319,11 +402,13 @@ def build_weather_layout(
         left_h += line_gap + uv_h
     if solar_text:
         left_h += line_gap + solar_h
+    if daylen_text:
+        left_h += line_gap + daylen_h
     if week_text:
         left_h += line_gap + week_h
 
-    body_w = left_w + column_gap + right_w
-    body_h = max(left_h, right_h)
+    body_w = space_prefix_w + left_w + column_gap + right_w
+    body_h = max(space_h, left_h, right_h)
 
     def justified_gap(content_h: int, n_gaps: int, base_gap: int) -> int:
         if n_gaps <= 0:
@@ -335,6 +420,8 @@ def build_weather_layout(
         left_row_heights.append(uv_h)
     if solar_text:
         left_row_heights.append(solar_h)
+    if daylen_text:
+        left_row_heights.append(daylen_h)
     if week_text:
         left_row_heights.append(week_h)
     left_gap = justified_gap(sum(left_row_heights), len(left_row_heights) - 1, line_gap)
@@ -349,21 +436,29 @@ def build_weather_layout(
         block_h += line_gap + footer_h
 
     # ---- Absolute anchors ---------------------------------------------------
-    bx = (canvas_w - block_w) // 2
+    # Center horizontally, but never let the (pill-padded) block run off the
+    # left edge: if the block is wider than the canvas, pin its left pad to 0
+    # rather than centering, so the leftmost column stays visible. (The right
+    # side may still extend past a too-narrow canvas, but the standalone widget
+    # sizes its font to avoid that; the wallpaper is far wider than the block.)
+    bx = max(pad, (canvas_w - block_w) // 2)
     by = zone_y + zone_h - block_h - margin
     pill_box = (bx - pad, by - pad, bx + block_w + pad, by + block_h + pad)
 
     col_left_x = bx + (block_w - body_w) // 2
     body_y = by + date_line_h + line_gap
-    left_x = col_left_x
+    # The space column (when shown) is leftmost; the hero/left column and the
+    # forecast/right column shift right by its width + gap.
+    space_x = col_left_x
+    left_x = col_left_x + space_prefix_w
     right_x = left_x + left_w + column_gap
 
     # ---- Date line ----------------------------------------------------------
     date_y = by + (date_line_h - date_h) // 2
     if lunar:
         greg_piece = TextPiece(gregorian,
-                               col_left_x + (left_w - greg_w) // 2, date_y)
-        moon_x = col_left_x + left_w + column_gap
+                               left_x + (left_w - greg_w) // 2, date_y)
+        moon_x = left_x + left_w + column_gap
         moon_y = by + (date_line_h - 2 * moon_r) // 2
         lunar_y = by + (date_line_h - lunar_h) // 2
         moon_right = moon_x + 2 * moon_r
@@ -386,6 +481,20 @@ def build_weather_layout(
             gregorian=TextPiece(gregorian, bx + (block_w - greg_w) // 2, date_y),
             has_lunar=False,
         )
+
+    # ---- Space-weather column (leftmost, optional) --------------------------
+    space_column = None
+    if show_space:
+        sy = body_y
+        heading = TextPiece(space_heading_text, space_x, sy)
+        sy += space_head_h + line_gap
+        kp_bar = KpBar(x=space_x, y=sy, width=space_w, value=kp_value)
+        sy += kp_bar_h
+        space_column = SpaceColumn(heading=heading, kp_bar=kp_bar)
+        for key, txt, _lw, lh in space_lines:
+            sy += line_gap
+            setattr(space_column, key, TextPiece(txt, space_x, sy))
+            sy += lh
 
     # ---- Hero ---------------------------------------------------------------
     ly = body_y
@@ -425,6 +534,12 @@ def build_weather_layout(
         ly += left_gap
         solar_piece = TextPiece(solar_text, left_x, ly)
         ly += solar_h
+
+    daylen_piece = None
+    if daylen_text:
+        ly += left_gap
+        daylen_piece = TextPiece(daylen_text, left_x, ly)
+        ly += daylen_h
 
     week_piece = None
     if week_text:
@@ -484,7 +599,9 @@ def build_weather_layout(
         forecast_rows=forecast_rows,
         uv_bar=uv_bar,
         solar=solar_piece,
+        daylen=daylen_piece,
         week=week_piece,
         footer=footer_piece,
+        space=space_column,
         rain_as_pie=rain_as_pie,
     )

@@ -271,6 +271,9 @@ class Settings:
     weather_longitude: Optional[float] = None
     # Hourly rain chance display: True → mini pie chart, False → "NN%" text.
     weather_rain_as_pie: bool = True
+    # Space weather column (geomagnetic Kp index + aurora outlook, from NOAA).
+    # Draws as an extra column on the left of the weather widget when on.
+    show_space_weather: bool = False
 
 
 def load_settings() -> Settings:

@@ -16,9 +16,13 @@ from weather import (
     _cache_matches,
 )
 from renderer import (
+    _aurora_outlook,
     _code_bucket,
     _format_gmt_offset,
+    _kp_band_index,
+    _kp_label,
     _next_solar_event,
+    _solar_activity_outlook,
     _summarize_week,
     _uv_band_index,
     _uv_label,
@@ -97,6 +101,51 @@ def test_uv_label_bands(uv, label):
 def test_uv_band_index_is_monotonic():
     indices = [_uv_band_index(uv) for uv in (0, 3, 6, 8, 11)]
     assert indices == [0, 1, 2, 3, 4]
+
+
+# ---------------------------------------------------------------------------
+# Kp (geomagnetic) bands + aurora outlook
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "kp, label",
+    [
+        (0, "Quiet"), (4, "Quiet"), (4.9, "Quiet"),
+        (5, "G1 Minor"),
+        (6, "G2 Moderate"),
+        (7, "G3 Strong"),
+        (8, "G4 Severe"),
+        (9, "G5 Extreme"), (12, "G5 Extreme"),
+    ],
+)
+def test_kp_label_bands(kp, label):
+    assert _kp_label(kp) == label
+
+
+def test_kp_band_index_is_monotonic():
+    indices = [_kp_band_index(kp) for kp in (0, 5, 6, 7, 8, 9)]
+    assert indices == [0, 1, 2, 3, 4, 5]
+
+
+def test_aurora_outlook_escalates_with_kp():
+    assert _aurora_outlook(1) == "Aurora unlikely"
+    assert "high latitudes" in _aurora_outlook(4)
+    assert "mid-latitudes" in _aurora_outlook(6)
+    assert _aurora_outlook(8) == "Aurora far from poles"
+
+
+# ---------------------------------------------------------------------------
+# Solar activity (NOAA R-scale → plain-language label)
+# ---------------------------------------------------------------------------
+
+def test_solar_activity_outlook_quiet_and_active():
+    assert _solar_activity_outlook(0) == "Sun: quiet"
+    assert _solar_activity_outlook(3) == "Sun: strong flares"
+    assert _solar_activity_outlook(5) == "Sun: extreme flares"
+
+
+def test_solar_activity_outlook_blank_when_unknown():
+    assert _solar_activity_outlook(None) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -197,3 +246,60 @@ def test_next_solar_event_after_sunset_shows_tomorrows_sunrise():
 
 def test_next_solar_event_returns_none_when_data_missing():
     assert _next_solar_event(_solar_report(), datetime(2026, 1, 1, 12, 0)) is None
+
+
+# ---------------------------------------------------------------------------
+# _fetch_space_weather — parse NOAA SWPC Kp "table" JSON (no network)
+# ---------------------------------------------------------------------------
+
+import weather as weather_mod
+
+
+def test_fetch_space_weather_parses_current_and_forecast(monkeypatch):
+    # NOAA products are arrays of objects. The current product uses "Kp";
+    # the forecast product uses "kp" and flags upcoming rows observed="predicted".
+    current_rows = [
+        {"time_tag": "2026-10-11T09:00:00", "Kp": 3.0},
+        {"time_tag": "2026-10-11T12:00:00", "Kp": 6.0},   # latest → current Kp
+    ]
+    forecast_rows = [
+        {"time_tag": "2026-10-10T15:00:00", "kp": 9.0, "observed": "observed"},  # past storm, ignored
+        {"time_tag": "2026-10-13T03:00:00", "kp": 5.0, "observed": "predicted"},
+        {"time_tag": "2026-10-13T06:00:00", "kp": 7.0, "observed": "predicted"},  # peak of the forecast
+        {"time_tag": "2026-10-13T09:00:00", "kp": 4.0, "observed": "predicted"},
+    ]
+
+    def fake_get(url):
+        return current_rows if "forecast" not in url else forecast_rows
+
+    monkeypatch.setattr(weather_mod, "_http_get_json", fake_get)
+    current, forecast_max = weather_mod._fetch_space_weather()
+    assert current == 6.0
+    # The past observed Kp 9 must be excluded; only predicted rows count.
+    assert forecast_max == 7.0
+
+
+def test_fetch_space_weather_tolerates_failure(monkeypatch):
+    def boom(url):
+        raise weather_mod.urllib.error.URLError("offline")
+
+    monkeypatch.setattr(weather_mod, "_http_get_json", boom)
+    assert weather_mod._fetch_space_weather() == (None, None)
+
+
+def test_fetch_solar_activity_reads_current_r_scale(monkeypatch):
+    # NOAA scales product: "0" is the current entry; R.Scale is the level.
+    scales = {
+        "0": {"R": {"Scale": "2", "Text": "moderate"}, "S": {"Scale": "0"}, "G": {"Scale": "0"}},
+        "1": {"R": {"Scale": None, "MinorProb": "45"}},
+    }
+    monkeypatch.setattr(weather_mod, "_http_get_json", lambda url: scales)
+    assert weather_mod._fetch_solar_activity() == 2
+
+
+def test_fetch_solar_activity_tolerates_failure(monkeypatch):
+    def boom(url):
+        raise weather_mod.urllib.error.URLError("offline")
+
+    monkeypatch.setattr(weather_mod, "_http_get_json", boom)
+    assert weather_mod._fetch_solar_activity() is None

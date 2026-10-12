@@ -47,7 +47,7 @@ DEFAULT_WEATHER_LOCATION = "Ho Chi Minh City"
 # Bump whenever the cached report's schema changes (new fields, etc.) so a
 # cache written by an older build is discarded and refetched rather than
 # served with fields silently missing.
-CACHE_VERSION = 3
+CACHE_VERSION = 5
 
 # How long a fetched report stays fresh before we try to refresh it.
 REFRESH_INTERVAL_SECONDS = 30 * 60  # half an hour
@@ -101,6 +101,10 @@ class WeatherReport:
     # Daily WMO weather codes for the running 7-day forecast (today first).
     weekly_codes: List[int] = field(default_factory=list)
     requested_location: str = "" # the location string this report was built for
+    # Space weather (global, not location-specific). From NOAA SWPC.
+    kp_index: Optional[float] = None   # current planetary K-index, 0–9
+    kp_forecast_max: Optional[float] = None  # peak Kp forecast over ~next 24h
+    r_scale: Optional[int] = None      # current NOAA R-scale (radio blackout), 0–5
 
 
 # ---------------------------------------------------------------------------
@@ -224,14 +228,127 @@ def _resolve_location(
         return _geolocate()
 
 
+# ---------------------------------------------------------------------------
+# Space weather (NOAA SWPC — free, key-less, global)
+# ---------------------------------------------------------------------------
+
+# NOAA SWPC planetary K-index products. Each returns a JSON array of records
+# ({"time_tag", "Kp"/"kp", ...}). The current product carries recent estimated
+# Kp; the forecast product carries 3-hourly Kp with an "observed" field marking
+# past ("observed"/"estimated") vs upcoming ("predicted") rows.
+KP_CURRENT_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
+KP_FORECAST_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json"
+
+# NOAA scales product: a dict keyed by day offset ("0" = now, "1".."3" = next
+# days, "-1" = yesterday). Each entry has R/S/G sub-objects with a "Scale"
+# (0–5) and "Text". The R scale tracks radio blackouts driven by solar flares,
+# so it stands in for a plain-language "solar activity level".
+NOAA_SCALES_URL = "https://services.swpc.noaa.gov/products/noaa-scales.json"
+
+
+def _row_kp(row: dict) -> Optional[float]:
+    """Pull the Kp value from a NOAA record, tolerating 'Kp' or 'kp' keys."""
+    for key in ("Kp", "kp", "kp_index", "estimated_kp"):
+        if key in row and row[key] is not None:
+            try:
+                return float(row[key])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _fetch_space_weather() -> Tuple[Optional[float], Optional[float]]:
+    """
+    Return (current_kp, forecast_max_kp) from NOAA SWPC, each possibly None.
+
+    Both SWPC endpoints return a JSON *array of objects* with a "time_tag" and
+    a Kp value ("Kp" on the current product, "kp" on the forecast one). The
+    current product's last record is the latest estimated Kp. The forecast
+    product mixes already-observed/estimated records with upcoming "predicted"
+    ones (flagged by its "observed" field), so the forecast peak is taken over
+    the predicted records only — otherwise a storm from days ago would inflate
+    the "next 24h" outlook.
+
+    Best-effort and global (not location-specific): any failure yields
+    (None, None) so a space-weather hiccup never blocks the terrestrial report.
+    """
+    current_kp: Optional[float] = None
+    forecast_max: Optional[float] = None
+
+    try:
+        rows = _http_get_json(KP_CURRENT_URL)
+        if isinstance(rows, list):
+            for row in reversed(rows):
+                if isinstance(row, dict):
+                    kp = _row_kp(row)
+                    if kp is not None:
+                        current_kp = kp
+                        break
+    except (urllib.error.URLError, TimeoutError, ValueError, KeyError,
+            IndexError, TypeError, OSError) as exc:
+        log.info("Current Kp fetch failed: %s", exc)
+
+    try:
+        rows = _http_get_json(KP_FORECAST_URL)
+        if isinstance(rows, list):
+            predicted = [
+                kp for row in rows
+                if isinstance(row, dict) and row.get("observed") == "predicted"
+                for kp in (_row_kp(row),) if kp is not None
+            ]
+            if predicted:
+                forecast_max = max(predicted)
+            else:
+                # No records flagged "predicted" (schema change?) — fall back to
+                # the overall max so we still show something sensible.
+                allkp = [
+                    kp for row in rows if isinstance(row, dict)
+                    for kp in (_row_kp(row),) if kp is not None
+                ]
+                if allkp:
+                    forecast_max = max(allkp)
+    except (urllib.error.URLError, TimeoutError, ValueError, KeyError,
+            IndexError, TypeError, OSError) as exc:
+        log.info("Kp forecast fetch failed: %s", exc)
+
+    return current_kp, forecast_max
+
+
+def _fetch_solar_activity() -> Optional[int]:
+    """
+    Return the current NOAA R-scale (radio blackout) level 0–5, or None.
+
+    The R scale is driven by solar X-ray flares, so it reads as a "solar
+    activity level" in the same spirit as the aurora/Kp outlook. We read the
+    "0" (current) entry of the NOAA scales product. Best-effort: any failure
+    returns None so the renderer simply omits the line.
+    """
+    try:
+        data = _http_get_json(NOAA_SCALES_URL)
+        if isinstance(data, dict):
+            now = data.get("0") or {}
+            r = now.get("R") or {}
+            scale = r.get("Scale")
+            if scale is not None:
+                return int(scale)
+    except (urllib.error.URLError, TimeoutError, ValueError, KeyError,
+            IndexError, TypeError, OSError) as exc:
+        log.info("Solar activity (R-scale) fetch failed: %s", exc)
+    return None
+
+
 def _fetch_report(
     latitude: Optional[float],
     longitude: Optional[float],
     location: str,
     fahrenheit: bool,
+    include_space_weather: bool = False,
 ) -> WeatherReport:
     """
     Build a WeatherReport from Open-Meteo for the resolved location.
+
+    When *include_space_weather* is set, the global NOAA SWPC Kp index is
+    fetched too and attached to the report.
     """
     latitude, longitude, location_name = _resolve_location(
         latitude, longitude, location)
@@ -305,6 +422,12 @@ def _fetch_report(
 
     weekly_codes = [int(c) for c in daily.get("weather_code", []) if c is not None]
 
+    kp_index = kp_forecast_max = None
+    r_scale = None
+    if include_space_weather:
+        kp_index, kp_forecast_max = _fetch_space_weather()
+        r_scale = _fetch_solar_activity()
+
     return WeatherReport(
         location=location_name,
         temperature=float(current.get("temperature_2m", hours[0].temperature if hours else 0.0)),
@@ -321,6 +444,9 @@ def _fetch_report(
         uv_index=float(uv_now) if uv_now is not None else None,
         uv_index_max=float(uv_max) if uv_max is not None else None,
         weekly_codes=weekly_codes,
+        kp_index=kp_index,
+        kp_forecast_max=kp_forecast_max,
+        r_scale=r_scale,
     )
 
 
@@ -362,6 +488,9 @@ def _load_cache() -> Optional[WeatherReport]:
             uv_index_max=data.get("uv_index_max"),
             weekly_codes=data.get("weekly_codes", []),
             requested_location=data.get("requested_location", ""),
+            kp_index=data.get("kp_index"),
+            kp_forecast_max=data.get("kp_forecast_max"),
+            r_scale=data.get("r_scale"),
         )
     except (json.JSONDecodeError, OSError, KeyError, TypeError) as exc:
         log.info("Ignoring unreadable weather cache: %s", exc)
@@ -400,6 +529,7 @@ def get_weather(
     longitude: Optional[float] = None,
     location: str = "",
     fahrenheit: bool = False,
+    space_weather: bool = False,
 ) -> Optional[WeatherReport]:
     """
     Return a current WeatherReport, or None if no report can be obtained.
@@ -409,9 +539,13 @@ def get_weather(
     overrides the name. The result carries the resolved, human-readable place
     name for display.
 
+    When *space_weather* is set, the global NOAA SWPC Kp index is fetched too
+    and attached to the report (so the renderer can show the aurora outlook).
+
     A cached report is reused while it is still fresh (younger than
     REFRESH_INTERVAL_SECONDS) *and* it was produced for the same location and
-    temperature unit. Changing either forces an immediate refresh. Once stale,
+    temperature unit, *and* it already carries space-weather data when that is
+    requested. Changing any of these forces an immediate refresh. Once stale,
     a network refresh is attempted; if that fails, the stale cache is returned
     as a best-effort fallback so the wallpaper still shows the last known
     weather instead of nothing.
@@ -421,8 +555,12 @@ def get_weather(
     down the wallpaper render.
     """
     cached = _load_cache()
+    # If space weather is wanted but the cache predates that choice, treat the
+    # cache as stale so a refresh fills it in.
+    space_ok = (not space_weather) or (cached is not None and cached.kp_index is not None)
     fresh = (
         cached is not None
+        and space_ok
         and (time.time() - cached.fetched_at) < REFRESH_INTERVAL_SECONDS
         and (latitude is not None and longitude is not None
              or _cache_matches(cached, location, fahrenheit))
@@ -431,7 +569,8 @@ def get_weather(
         return cached
 
     try:
-        report = _fetch_report(latitude, longitude, location, fahrenheit)
+        report = _fetch_report(latitude, longitude, location, fahrenheit,
+                               include_space_weather=space_weather)
         report.requested_location = location.strip() or DEFAULT_WEATHER_LOCATION
         _save_cache(report)
         return report

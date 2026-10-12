@@ -117,8 +117,8 @@ def test_weather_panel_blank_when_no_report(monkeypatch):
 
 # Snapshot digests captured from the pre-refactor implementation. See
 # tests/conftest or the generating command in the PR notes.
-PIE_MODE_DIGEST = "a5344738bfe3dba17f6589e3d560353146fbba38dba9db185a3672b4e5312c87"
-PCT_MODE_DIGEST = "671ca6d5c90b2d69ebbcebf7404ad129b2e45ad010199b3862c94a7bd50396e9"
+PIE_MODE_DIGEST = "95ae5a20a4a87f5d754fd6b99d4903475fc4ae5fe37bdf796d1651250ad65ad7"
+PCT_MODE_DIGEST = "4260f1bee419faed79535afe5fa00a6efc112af0479ad119c2f8baf50c913943"
 
 
 # ---------------------------------------------------------------------------
@@ -218,3 +218,188 @@ def test_week_summary_shown_in_full_on_wide_canvas(monkeypatch):
     assert layout.week is not None
     assert layout.week.text == "7-day: an even mix of rainy and cloudy"
     assert not layout.week.text.endswith("…")
+
+
+# ---------------------------------------------------------------------------
+# Space-weather column (third column, leftmost)
+# ---------------------------------------------------------------------------
+
+def _space_report() -> WeatherReport:
+    rep = _fixed_report()
+    rep.kp_index = 6.0
+    rep.kp_forecast_max = 7.0
+    return rep
+
+
+def test_space_column_present_and_leftmost_when_enabled(monkeypatch):
+    from renderer.weather_layout import build_weather_layout
+
+    monkeypatch.setattr(wl, "format_dates",
+                        lambda today: ("Sun, 11 Oct 2026", "16 Oct", 16))
+
+    img = Image.new("RGB", (CANVAS_W, 420), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, _space_report(), CANVAS_W, 0, 420,
+        Settings(show_weather=True, show_space_weather=True,
+                 weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
+    )
+
+    assert layout.space is not None
+    assert layout.space.kp_bar.value == 6.0
+    assert layout.space.aurora is not None
+    # Column order left→right: space < hero < forecast.
+    space_x = layout.space.heading.x
+    hero_x = layout.hero.temp.x
+    forecast_x = layout.forecast_rows[0].icon_x
+    assert space_x < hero_x < forecast_x
+
+
+def test_space_column_absent_when_disabled(monkeypatch):
+    from renderer.weather_layout import build_weather_layout
+
+    monkeypatch.setattr(wl, "format_dates",
+                        lambda today: ("Sun, 11 Oct 2026", "16 Oct", 16))
+
+    img = Image.new("RGB", (CANVAS_W, 420), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, _space_report(), CANVAS_W, 0, 420,
+        Settings(show_weather=True, show_space_weather=False,
+                 weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
+    )
+    assert layout.space is None
+
+
+def test_space_column_absent_when_no_kp_data(monkeypatch):
+    from renderer.weather_layout import build_weather_layout
+
+    monkeypatch.setattr(wl, "format_dates",
+                        lambda today: ("Sun, 11 Oct 2026", "16 Oct", 16))
+
+    # Toggle on, but the report carries no Kp (fetch failed / old cache).
+    rep = _fixed_report()  # kp_index / kp_forecast_max default to None
+    img = Image.new("RGB", (CANVAS_W, 420), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, rep, CANVAS_W, 0, 420,
+        Settings(show_weather=True, show_space_weather=True,
+                 weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
+    )
+    assert layout.space is None
+
+
+def test_space_column_paints_without_error(monkeypatch):
+    monkeypatch.setattr(weather_mod, "get_weather", lambda **kw: _space_report())
+    monkeypatch.setattr(wl, "format_dates",
+                        lambda today: ("Sun, 11 Oct 2026", "16 Oct", 16))
+    settings = Settings(show_weather=True, show_space_weather=True,
+                        weather_location="Ho Chi Minh City")
+    img = _render_panel(settings)
+    # The panel should have drawn (space column adds content, so non-blank).
+    blank = Image.new("RGB", (CANVAS_W, ZONE_Y + ZONE_H), (10, 10, 20))
+    assert _digest(img) != _digest(blank)
+
+
+# ---------------------------------------------------------------------------
+# Day length (main column) + expanded space column
+# ---------------------------------------------------------------------------
+
+def test_day_length_line_present_in_main_column(monkeypatch):
+    from renderer.weather_layout import build_weather_layout
+
+    monkeypatch.setattr(wl, "format_dates",
+                        lambda today: ("Sun, 11 Oct 2026", "16 Oct", 16))
+
+    img = Image.new("RGB", (CANVAS_W, 420), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, _fixed_report(), CANVAS_W, 0, 420,
+        Settings(show_weather=True, weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
+    )
+    assert layout.daylen is not None
+    # Sunrise 05:42 → Sunset 18:03 ≈ 12h 21m.
+    assert layout.daylen.text == "Daylight  12h 21m"
+
+
+def test_day_length_absent_without_sun_times(monkeypatch):
+    from renderer.weather_layout import build_weather_layout
+
+    monkeypatch.setattr(wl, "format_dates",
+                        lambda today: ("Sun, 11 Oct 2026", "16 Oct", 16))
+
+    rep = _fixed_report()
+    rep.sunrise_today = ""
+    rep.sunset_today = ""
+    img = Image.new("RGB", (CANVAS_W, 420), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, rep, CANVAS_W, 0, 420,
+        Settings(show_weather=True, weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
+    )
+    assert layout.daylen is None
+
+
+def test_space_column_includes_solar_and_cycle_and_planets(monkeypatch):
+    from renderer.weather_layout import build_weather_layout
+
+    monkeypatch.setattr(wl, "format_dates",
+                        lambda today: ("Sun, 11 Oct 2026", "16 Oct", 16))
+
+    rep = _fixed_report()
+    rep.kp_index = 6.0
+    rep.r_scale = 2
+    img = Image.new("RGB", (CANVAS_W, 460), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, rep, CANVAS_W, 0, 460,
+        Settings(show_weather=True, show_space_weather=True,
+                 weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 10, 11), now=datetime(2026, 10, 11, 20, 30),
+    )
+    sp = layout.space
+    assert sp is not None
+    assert sp.aurora is not None
+    assert sp.solar_activity is not None and "Sun:" in sp.solar_activity.text
+    assert sp.solar_cycle is not None and sp.solar_cycle.text.startswith("Solar cycle")
+    # Planets line present when at least one planet is clear of the Sun.
+    # (Astronomy-dependent, so only assert the slot type if set.)
+    if sp.planets is not None:
+        assert sp.planets.text.startswith("Planets: ")
+
+    # Space-column lines stack top→down below the Kp bar in order.
+    ys = [p.y for p in (sp.aurora, sp.solar_activity, sp.solar_cycle) if p is not None]
+    assert ys == sorted(ys)
+
+
+def test_space_column_omits_solar_activity_without_r_scale(monkeypatch):
+    from renderer.weather_layout import build_weather_layout
+
+    monkeypatch.setattr(wl, "format_dates",
+                        lambda today: ("Sun, 11 Oct 2026", "16 Oct", 16))
+
+    rep = _fixed_report()
+    rep.kp_index = 6.0
+    rep.r_scale = None  # no solar-activity data
+    img = Image.new("RGB", (CANVAS_W, 460), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, rep, CANVAS_W, 0, 460,
+        Settings(show_weather=True, show_space_weather=True,
+                 weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 10, 11), now=datetime(2026, 10, 11, 20, 30),
+    )
+    assert layout.space is not None
+    assert layout.space.solar_activity is None

@@ -42,15 +42,20 @@ from .grid import (
     weeks_elapsed as _weeks_elapsed,
 )
 from .weather_panel import (
+    draw_kp_bar as _draw_kp_bar,
     draw_uv_bar as _draw_uv_bar,
     draw_weather as _draw_weather,
 )
 from .weather_panel_text import (
+    aurora_outlook as _aurora_outlook,
     code_bucket as _code_bucket,
     format_dates as _format_dates,
     format_gmt_offset as _format_gmt_offset,
     format_hour_rain as _format_hour_rain,
+    kp_band_index as _kp_band_index,
+    kp_label as _kp_label,
     next_solar_event as _next_solar_event,
+    solar_activity_outlook as _solar_activity_outlook,
     summarize_week as _summarize_week,
     uv_band_index as _uv_band_index,
     uv_label as _uv_label,

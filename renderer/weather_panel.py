@@ -26,15 +26,22 @@ from config import Settings, Theme
 from .draw_utils import blend, ramp_color, resolve_font, text_size
 from .icons import draw_moon_phase, draw_rain_pie, draw_weather_icon
 from .weather_layout import WeatherLayout, build_weather_layout
-from .weather_panel_text import UV_BANDS, uv_band_index
+from .weather_panel_text import (
+    KP_BANDS,
+    UV_BANDS,
+    kp_band_index,
+    uv_band_index,
+)
 
 # Re-exported so the package's historical API (renderer._weather_condition etc.)
 # and tests can keep importing these names from here.
 from .weather_panel_text import (  # noqa: F401
+    aurora_outlook,
     code_bucket,
     format_dates,
     format_gmt_offset,
     format_hour_rain,
+    kp_label,
     next_solar_event,
     summarize_week,
     uv_label,
@@ -43,48 +50,62 @@ from .weather_panel_text import (  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
-# UV bar widget — draws its own segments, so it stays here rather than in text
+# Segmented bar widget — shared by the UV and Kp indicators
 # ---------------------------------------------------------------------------
 
-def draw_uv_bar(draw, x, y, width, uv_value, detail_font, theme,
-                center_label: bool = True) -> int:
+def _draw_segmented_bar(draw, x, y, width, bands, active, value_text,
+                        caption, detail_font, theme, center_label: bool) -> int:
     """
-    Draw the UV widget at (x, y): a segmented bar with one segment per WHO UV
-    band, the current numeric value shown inside its band's segment, and the
-    band description underneath (centered, or left-aligned when
-    center_label is False). Returns the total height drawn.
+    Draw a banded indicator at (x, y): one rounded segment per band, the active
+    band highlighted (others dimmed toward the background), *value_text* shown
+    inside the active segment, and *caption* underneath (centered, or
+    left-aligned when center_label is False). Returns the total height drawn.
+
+    This backs both the UV and the geomagnetic-Kp widgets so they share one
+    look and one implementation.
     """
-    n = len(UV_BANDS)
+    n = len(bands)
     seg_gap = 2
     seg_h = max(8, text_size(draw, "0", detail_font)[1] + 4)
     seg_w = (width - (n - 1) * seg_gap) / n
-    active = uv_band_index(uv_value)
 
-    for i, (_upper, _label, color) in enumerate(UV_BANDS):
+    for i, (_upper, _label, color) in enumerate(bands):
         sx0 = x + i * (seg_w + seg_gap)
         sx1 = sx0 + seg_w
-        # Inactive bands are dimmed toward the background; the active one is
-        # drawn at full strength so it stands out.
         fill = color if i == active else blend(theme.background, color, 0.35)
         draw.rounded_rectangle([sx0, y, sx1, y + seg_h], radius=2, fill=fill)
 
-        if i == active:
-            val = f"{uv_value:.0f}"
-            vw, vh = text_size(draw, val, detail_font)
-            # Pick black or white text for contrast against the band colour.
+        if i == active and value_text:
+            vw, vh = text_size(draw, value_text, detail_font)
+            color = bands[active][2]
             luma = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
             txt_color = (20, 20, 20) if luma > 140 else (245, 245, 245)
             draw.text((sx0 + (seg_w - vw) / 2, y + (seg_h - vh) / 2 - 1),
-                      val, fill=txt_color, font=detail_font)
+                      value_text, fill=txt_color, font=detail_font)
 
-    # Band description under the bar.
-    label = f"UV  {UV_BANDS[active][1]}"
-    lw, lh = text_size(draw, label, detail_font)
+    lw, lh = text_size(draw, caption, detail_font)
     label_y = y + seg_h + 4
     label_x = x + (width - lw) / 2 if center_label else x
-    draw.text((label_x, label_y), label, fill=theme.label_color, font=detail_font)
-
+    draw.text((label_x, label_y), caption, fill=theme.label_color, font=detail_font)
     return seg_h + 4 + lh
+
+
+def draw_uv_bar(draw, x, y, width, uv_value, detail_font, theme,
+                center_label: bool = True) -> int:
+    """Draw the WHO UV-index widget as a segmented bar. Returns its height."""
+    active = uv_band_index(uv_value)
+    return _draw_segmented_bar(
+        draw, x, y, width, UV_BANDS, active, f"{uv_value:.0f}",
+        f"UV  {UV_BANDS[active][1]}", detail_font, theme, center_label)
+
+
+def draw_kp_bar(draw, x, y, width, kp_value, detail_font, theme,
+                center_label: bool = False) -> int:
+    """Draw the geomagnetic Kp-index widget as a segmented bar. Returns height."""
+    active = kp_band_index(kp_value)
+    return _draw_segmented_bar(
+        draw, x, y, width, KP_BANDS, active, f"{kp_value:.0f}",
+        f"Kp  {KP_BANDS[active][1]}", detail_font, theme, center_label)
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +144,17 @@ def _paint_weather(
                                    width=max(1, base_font_size // 8))
         _at(dl.lunar, detail_font, label_color)
 
+    # Space-weather column (leftmost, optional) --------------------------
+    if layout.space is not None:
+        sp = layout.space
+        _at(sp.heading, detail_font, bright)
+        draw_kp_bar(draw, sp.kp_bar.x, sp.kp_bar.y, sp.kp_bar.width,
+                    sp.kp_bar.value, detail_font, theme, center_label=False)
+        for line in (sp.aurora, sp.solar_activity, sp.solar_cycle,
+                     sp.planets, sp.conjunction):
+            if line is not None:
+                _at(line, detail_font, bright)
+
     # Hero ---------------------------------------------------------------
     hero = layout.hero
     if hero.has_icon:
@@ -141,9 +173,11 @@ def _paint_weather(
         draw_uv_bar(draw, uv.x, uv.y, uv.width, uv.value, detail_font, theme,
                     center_label=False)
 
-    # Sun event + 7-day overview ----------------------------------------
+    # Sun event + day length + 7-day overview ---------------------------
     if layout.solar is not None:
         _at(layout.solar, detail_font, bright)
+    if layout.daylen is not None:
+        _at(layout.daylen, detail_font, bright)
     if layout.week is not None:
         _at(layout.week, detail_font, bright)
 
@@ -184,6 +218,7 @@ def _fetch_report(settings: Settings):
             longitude=settings.weather_longitude,
             location=settings.weather_location,
             fahrenheit=settings.weather_fahrenheit,
+            space_weather=getattr(settings, "show_space_weather", False),
         )
     except Exception:
         return None
@@ -238,16 +273,30 @@ def render_weather_panel(
     draw = ImageDraw.Draw(img)
     canvas_w, canvas_h = img.size
 
-    # Measure once by laying out as if the panel owned the whole frame, read
-    # back the pill's height, then re-lay-out into a zone that vertically
-    # centers that pill. build_weather_layout bottom-anchors within the zone
-    # with a fixed margin, so a zone of exactly (panel height + 2*margin)
-    # centred in the frame places the panel in the middle.
-    probe = build_weather_layout(
-        draw, report, canvas_w, 0, canvas_h,
-        settings, theme, base_font_size, today, now,
-    )
-    x0, y0, x1, y1 = probe.pill_box
+    def _pill(size: int):
+        return build_weather_layout(
+            draw, report, canvas_w, 0, canvas_h,
+            settings, theme, size, today, now,
+        ).pill_box
+
+    # Shrink the base font until the whole block fits the frame width. With the
+    # optional space-weather column the panel is three columns wide and can
+    # overflow a small quick-view frame; scaling the font down keeps every
+    # column on-screen instead of clipping the leftmost one. Stop at a legible
+    # floor even if it still won't fit (better small than clipped).
+    fitted = base_font_size
+    while fitted > 10:
+        px0, _, px1, _ = _pill(fitted)
+        if (px1 - px0) <= canvas_w:
+            break
+        fitted -= 1
+    base_font_size = fitted
+
+    # Lay out once at the fitted size to read the pill height, then re-lay-out
+    # into a zone that vertically centers it. build_weather_layout bottom-
+    # anchors within the zone with a fixed margin, so a zone of exactly
+    # (panel height + 2*margin) centred in the frame places the panel mid-frame.
+    x0, y0, x1, y1 = _pill(base_font_size)
     panel_h = y1 - y0
     margin = 18
     zone_h = panel_h + 2 * margin

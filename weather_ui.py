@@ -134,25 +134,35 @@ class WeatherWindow:
             command=self._schedule_preview, **radio_style,
         ).pack(side="left", padx=(10, 0))
 
+        # ---- Space weather toggle ---------------------------------------
+        self._show_space_var = tk.BooleanVar(value=self._settings.show_space_weather)
+        chk_style = {"bg": BG, "fg": LABEL_FG, "activebackground": BG,
+                     "selectcolor": ENTRY_BG, "relief": "flat"}
+        tk.Checkbutton(
+            frm, text="Show space weather (aurora / Kp)",
+            variable=self._show_space_var,
+            command=self._schedule_preview, **chk_style,
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=2)
+
         # ---- Separator --------------------------------------------------
         tk.Frame(frm, bg="#45475a", height=1).grid(
-            row=4, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
+            row=5, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
         )
 
         # ---- Preview (weather widget fills the whole canvas) ------------
         self._status = tk.Label(frm, text="", bg=BG, fg=HINT_FG,
                                 font=("Helvetica", 10))
-        self._status.grid(row=5, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        self._status.grid(row=6, column=0, columnspan=3, sticky="w", pady=(0, 4))
 
         self._preview_canvas = tk.Canvas(
             frm, width=PREVIEW_W, height=PREVIEW_H,
             bg="#000000", highlightthickness=0,
         )
-        self._preview_canvas.grid(row=6, column=0, columnspan=3, pady=(0, PAD))
+        self._preview_canvas.grid(row=7, column=0, columnspan=3, pady=(0, PAD))
 
         # ---- Buttons ----------------------------------------------------
         btn_frame = tk.Frame(frm, bg=BG)
-        btn_frame.grid(row=7, column=0, columnspan=3, sticky="e")
+        btn_frame.grid(row=8, column=0, columnspan=3, sticky="e")
         tk.Button(
             btn_frame, text="Refresh", command=self._render_preview,
             bg=BTN_BG, fg=BTN_FG, activebackground="#74c7ec",
@@ -178,6 +188,7 @@ class WeatherWindow:
         settings = replace(
             self._settings,
             show_weather=True,
+            show_space_weather=self._show_space_var.get(),
             weather_location=self._location_var.get().strip(),
             weather_fahrenheit=self._fahrenheit_var.get(),
             weather_rain_as_pie=self._rain_as_pie_var.get(),

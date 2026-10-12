@@ -59,6 +59,7 @@ Open it any time by:
 | Show year labels | Toggle the year axis labels. |
 | Show week labels | Toggle the week axis labels. |
 | Show weather | Toggle the weather panel in the bottom zone. |
+| Show space weather | Toggle an extra column (left of the weather panel) with the geomagnetic Kp index + aurora outlook, a solar-activity level (NOAA R-scale), the solar-cycle phase, and visible planets / conjunctions. Kp and activity come from NOAA SWPC; cycle and planets are computed locally. |
 | Location | Place name for the weather (e.g. `Ho Chi Minh City`). Blank falls back to the default location. |
 | Temperature unit | `°C` or `°F`. |
 | Rain chance | Show the hourly rain chance as a mini pie chart or as a percentage. |
@@ -117,7 +118,8 @@ Stored at `~/.lifecal/config.json`. You can edit it directly; the app picks up c
   "weather_location": "",
   "weather_latitude": null,
   "weather_longitude": null,
-  "weather_rain_as_pie": true
+  "weather_rain_as_pie": true,
+  "show_space_weather": false
 }
 ```
 
