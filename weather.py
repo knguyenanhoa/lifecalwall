@@ -47,7 +47,7 @@ DEFAULT_WEATHER_LOCATION = "Ho Chi Minh City"
 # Bump whenever the cached report's schema changes (new fields, etc.) so a
 # cache written by an older build is discarded and refetched rather than
 # served with fields silently missing.
-CACHE_VERSION = 5
+CACHE_VERSION = 6
 
 # How long a fetched report stays fresh before we try to refresh it.
 REFRESH_INTERVAL_SECONDS = 30 * 60  # half an hour
@@ -104,7 +104,9 @@ class WeatherReport:
     # Space weather (global, not location-specific). From NOAA SWPC.
     kp_index: Optional[float] = None   # current planetary K-index, 0–9
     kp_forecast_max: Optional[float] = None  # peak Kp forecast over ~next 24h
-    r_scale: Optional[int] = None      # current NOAA R-scale (radio blackout), 0–5
+    # Current GOES solar X-ray flare class, e.g. "B6.0" / "C3.6" / "M1.4" /
+    # "X2.1" (letter A–X + magnitude 1.0–9.9), or None when unavailable.
+    flare_class: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -239,11 +241,9 @@ def _resolve_location(
 KP_CURRENT_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
 KP_FORECAST_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json"
 
-# NOAA scales product: a dict keyed by day offset ("0" = now, "1".."3" = next
-# days, "-1" = yesterday). Each entry has R/S/G sub-objects with a "Scale"
-# (0–5) and "Text". The R scale tracks radio blackouts driven by solar flares,
-# so it stands in for a plain-language "solar activity level".
-NOAA_SCALES_URL = "https://services.swpc.noaa.gov/products/noaa-scales.json"
+# GOES latest solar X-ray flare(s): an array with the most recent flare's
+# "current_class" and the day's "max_class" (flare-class strings like "C3.6").
+XRAY_FLARES_URL = "https://services.swpc.noaa.gov/json/goes/primary/xray-flares-latest.json"
 
 
 def _row_kp(row: dict) -> Optional[float]:
@@ -314,26 +314,27 @@ def _fetch_space_weather() -> Tuple[Optional[float], Optional[float]]:
     return current_kp, forecast_max
 
 
-def _fetch_solar_activity() -> Optional[int]:
+def _fetch_solar_activity() -> Optional[str]:
     """
-    Return the current NOAA R-scale (radio blackout) level 0–5, or None.
+    Return the current GOES solar X-ray flare class (e.g. "C3.6"), or None.
 
-    The R scale is driven by solar X-ray flares, so it reads as a "solar
-    activity level" in the same spirit as the aurora/Kp outlook. We read the
-    "0" (current) entry of the NOAA scales product. Best-effort: any failure
+    Solar activity is conventionally reported on the flare-class scale
+    (A/B/C/M/X, each letter a 10× step in X-ray flux). The GOES latest-flares
+    product reports the live class directly. We prefer the current class and
+    fall back to the record's peak class for the day. Best-effort: any failure
     returns None so the renderer simply omits the line.
     """
     try:
-        data = _http_get_json(NOAA_SCALES_URL)
-        if isinstance(data, dict):
-            now = data.get("0") or {}
-            r = now.get("R") or {}
-            scale = r.get("Scale")
-            if scale is not None:
-                return int(scale)
+        data = _http_get_json(XRAY_FLARES_URL)
+        if isinstance(data, list) and data:
+            record = data[-1]
+            if isinstance(record, dict):
+                cls = record.get("current_class") or record.get("max_class")
+                if cls:
+                    return str(cls)
     except (urllib.error.URLError, TimeoutError, ValueError, KeyError,
             IndexError, TypeError, OSError) as exc:
-        log.info("Solar activity (R-scale) fetch failed: %s", exc)
+        log.info("Solar flare class fetch failed: %s", exc)
     return None
 
 
@@ -423,10 +424,10 @@ def _fetch_report(
     weekly_codes = [int(c) for c in daily.get("weather_code", []) if c is not None]
 
     kp_index = kp_forecast_max = None
-    r_scale = None
+    flare_class = None
     if include_space_weather:
         kp_index, kp_forecast_max = _fetch_space_weather()
-        r_scale = _fetch_solar_activity()
+        flare_class = _fetch_solar_activity()
 
     return WeatherReport(
         location=location_name,
@@ -446,7 +447,7 @@ def _fetch_report(
         weekly_codes=weekly_codes,
         kp_index=kp_index,
         kp_forecast_max=kp_forecast_max,
-        r_scale=r_scale,
+        flare_class=flare_class,
     )
 
 
@@ -490,7 +491,7 @@ def _load_cache() -> Optional[WeatherReport]:
             requested_location=data.get("requested_location", ""),
             kp_index=data.get("kp_index"),
             kp_forecast_max=data.get("kp_forecast_max"),
-            r_scale=data.get("r_scale"),
+            flare_class=data.get("flare_class"),
         )
     except (json.JSONDecodeError, OSError, KeyError, TypeError) as exc:
         log.info("Ignoring unreadable weather cache: %s", exc)

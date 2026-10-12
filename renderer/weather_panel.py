@@ -24,11 +24,19 @@ from PIL import ImageDraw
 from config import Settings, Theme
 
 from .draw_utils import blend, ramp_color, resolve_font, text_size
-from .icons import draw_moon_phase, draw_rain_pie, draw_weather_icon
+from .icons import (
+    draw_moon_phase,
+    draw_planet_symbol,
+    draw_rain_pie,
+    draw_weather_icon,
+)
 from .weather_layout import WeatherLayout, build_weather_layout
 from .weather_panel_text import (
+    FLARE_BANDS,
     KP_BANDS,
     UV_BANDS,
+    flare_band_index,
+    flare_label,
     kp_band_index,
     uv_band_index,
 )
@@ -36,13 +44,13 @@ from .weather_panel_text import (
 # Re-exported so the package's historical API (renderer._weather_condition etc.)
 # and tests can keep importing these names from here.
 from .weather_panel_text import (  # noqa: F401
-    aurora_outlook,
     code_bucket,
     format_dates,
     format_gmt_offset,
     format_hour_rain,
     kp_label,
     next_solar_event,
+    parse_flare_class,
     summarize_week,
     uv_label,
     weather_condition,
@@ -108,6 +116,22 @@ def draw_kp_bar(draw, x, y, width, kp_value, detail_font, theme,
         f"Kp  {KP_BANDS[active][1]}", detail_font, theme, center_label)
 
 
+def draw_flare_bar(draw, x, y, width, flare_class, detail_font, theme,
+                   center_label: bool = False) -> int:
+    """
+    Draw the solar X-ray flare-class widget (A/B/C/M/X) as a segmented bar.
+    The active segment is the current class's letter; the caption shows the
+    full class (e.g. "Flare  C3.6"). Returns the total height drawn.
+    """
+    active = flare_band_index(flare_class)
+    # FLARE_BANDS are (letter, color); adapt to the (upper, label, color) shape
+    # the shared bar drawer expects, and show the letter inside the segment.
+    bands = [(None, letter, color) for letter, color in FLARE_BANDS]
+    return _draw_segmented_bar(
+        draw, x, y, width, bands, active, FLARE_BANDS[active][0],
+        flare_label(flare_class), detail_font, theme, center_label)
+
+
 # ---------------------------------------------------------------------------
 # Paint pass
 # ---------------------------------------------------------------------------
@@ -150,10 +174,28 @@ def _paint_weather(
         _at(sp.heading, detail_font, bright)
         draw_kp_bar(draw, sp.kp_bar.x, sp.kp_bar.y, sp.kp_bar.width,
                     sp.kp_bar.value, detail_font, theme, center_label=False)
-        for line in (sp.aurora, sp.solar_activity, sp.solar_cycle,
-                     sp.planets, sp.conjunction):
-            if line is not None:
-                _at(line, detail_font, bright)
+        # Solar activity as a flare-class segmented bar (A/B/C/M/X).
+        if sp.flare_bar is not None:
+            fb = sp.flare_bar
+            draw_flare_bar(draw, fb.x, fb.y, fb.width, fb.flare_class,
+                           detail_font, theme, center_label=False)
+        if sp.solar_cycle is not None:
+            _at(sp.solar_cycle, detail_font, bright)
+        # Visible planets: vector symbol + short tag per planet, not names.
+        if sp.planets is not None:
+            for entry in sp.planets.entries:
+                draw_planet_symbol(draw, entry.glyph.planet, entry.glyph.x,
+                                   entry.glyph.y, entry.glyph.size, bright)
+                _at(entry.tag, detail_font, bright)
+        # The conjunction is drawn as two vector planet symbols + a "N°" label,
+        # rather than planet names, to stay compact.
+        if sp.conjunction is not None:
+            cj = sp.conjunction
+            draw_planet_symbol(draw, cj.glyph_a.planet, cj.glyph_a.x,
+                               cj.glyph_a.y, cj.glyph_a.size, bright)
+            draw_planet_symbol(draw, cj.glyph_b.planet, cj.glyph_b.x,
+                               cj.glyph_b.y, cj.glyph_b.size, bright)
+            _at(cj.sep, detail_font, bright)
 
     # Hero ---------------------------------------------------------------
     hero = layout.hero

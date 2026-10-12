@@ -249,7 +249,6 @@ def test_space_column_present_and_leftmost_when_enabled(monkeypatch):
 
     assert layout.space is not None
     assert layout.space.kp_bar.value == 6.0
-    assert layout.space.aurora is not None
     # Column order left→right: space < hero < forecast.
     space_x = layout.space.heading.x
     hero_x = layout.hero.temp.x
@@ -358,7 +357,7 @@ def test_space_column_includes_solar_and_cycle_and_planets(monkeypatch):
 
     rep = _fixed_report()
     rep.kp_index = 6.0
-    rep.r_scale = 2
+    rep.flare_class = "C3.6"
     img = Image.new("RGB", (CANVAS_W, 460), (10, 10, 20))
     draw = ImageDraw.Draw(img)
     layout = build_weather_layout(
@@ -370,20 +369,24 @@ def test_space_column_includes_solar_and_cycle_and_planets(monkeypatch):
     )
     sp = layout.space
     assert sp is not None
-    assert sp.aurora is not None
-    assert sp.solar_activity is not None and "Sun:" in sp.solar_activity.text
+    # Solar activity is now a flare-class bar, not a text line.
+    assert sp.flare_bar is not None and sp.flare_bar.flare_class == "C3.6"
     assert sp.solar_cycle is not None and sp.solar_cycle.text.startswith("Solar cycle")
-    # Planets line present when at least one planet is clear of the Sun.
-    # (Astronomy-dependent, so only assert the slot type if set.)
+    # Planets row present when at least one planet is clear of the Sun. It is
+    # now a vector PlanetsRow (symbols + tags), not a names text line.
+    # (Astronomy-dependent, so only assert the structure when present.)
+    from renderer.weather_layout import PlanetsRow
     if sp.planets is not None:
-        assert sp.planets.text.startswith("Planets: ")
+        assert isinstance(sp.planets, PlanetsRow)
+        assert sp.planets.entries
+        from renderer.icons import PLANET_SYMBOLS
+        assert all(e.glyph.planet in PLANET_SYMBOLS for e in sp.planets.entries)
 
-    # Space-column lines stack top→down below the Kp bar in order.
-    ys = [p.y for p in (sp.aurora, sp.solar_activity, sp.solar_cycle) if p is not None]
-    assert ys == sorted(ys)
+    # The space column stacks top→down: Kp bar, flare bar, solar cycle.
+    assert sp.kp_bar.y < sp.flare_bar.y < sp.solar_cycle.y
 
 
-def test_space_column_omits_solar_activity_without_r_scale(monkeypatch):
+def test_space_column_omits_flare_bar_without_flare_class(monkeypatch):
     from renderer.weather_layout import build_weather_layout
 
     monkeypatch.setattr(wl, "format_dates",
@@ -391,7 +394,7 @@ def test_space_column_omits_solar_activity_without_r_scale(monkeypatch):
 
     rep = _fixed_report()
     rep.kp_index = 6.0
-    rep.r_scale = None  # no solar-activity data
+    rep.flare_class = None  # no solar-activity data
     img = Image.new("RGB", (CANVAS_W, 460), (10, 10, 20))
     draw = ImageDraw.Draw(img)
     layout = build_weather_layout(
@@ -402,4 +405,58 @@ def test_space_column_omits_solar_activity_without_r_scale(monkeypatch):
         today=date(2026, 10, 11), now=datetime(2026, 10, 11, 20, 30),
     )
     assert layout.space is not None
-    assert layout.space.solar_activity is None
+    assert layout.space.flare_bar is None
+    # The Kp bar still shows (space weather is on and Kp is present).
+    assert layout.space.kp_bar is not None
+
+
+# ---------------------------------------------------------------------------
+# Conjunction rendered as vector planet symbols (not names)
+# ---------------------------------------------------------------------------
+
+def test_conjunction_uses_vector_glyphs(monkeypatch):
+    import astro
+    from renderer.weather_layout import Conjunction, PlanetGlyph, build_weather_layout
+    from renderer.icons import PLANET_SYMBOLS
+
+    monkeypatch.setattr(wl, "format_dates",
+                        lambda today: ("Tue, 17 Mar 2026", "29 Jan", 29))
+
+    # 2026-03-17 has a Mercury–Mars conjunction (~3°) in the low-precision model.
+    when = datetime(2026, 3, 17, 20, 0)
+    assert astro.planet_conjunctions(when), "expected a conjunction on this date"
+
+    rep = _fixed_report()
+    rep.kp_index = 6.0
+    img = Image.new("RGB", (CANVAS_W, 480), (10, 10, 20))
+    draw = ImageDraw.Draw(img)
+    layout = build_weather_layout(
+        draw, rep, CANVAS_W, 0, 480,
+        Settings(show_weather=True, show_space_weather=True,
+                 weather_location="Ho Chi Minh City"),
+        Theme(name="test"), BASE_FONT,
+        today=date(2026, 3, 17), now=when,
+    )
+    cj = layout.space.conjunction
+    assert isinstance(cj, Conjunction)
+    assert isinstance(cj.glyph_a, PlanetGlyph) and cj.glyph_a.planet in PLANET_SYMBOLS
+    assert isinstance(cj.glyph_b, PlanetGlyph) and cj.glyph_b.planet in PLANET_SYMBOLS
+    # The separation label is a bare "N°", not planet names.
+    assert cj.sep.text.endswith("°")
+    assert not any(p in cj.sep.text for p in PLANET_SYMBOLS)
+    # Second glyph sits to the right of the first; the label right of both.
+    assert cj.glyph_a.x < cj.glyph_b.x < cj.sep.x
+
+
+def test_planet_symbols_draw_without_error():
+    from renderer import PLANET_SYMBOLS, draw_planet_symbol
+    img = Image.new("RGB", (240, 48), (0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    x = 4
+    for planet in PLANET_SYMBOLS:
+        draw_planet_symbol(draw, planet, x, 4, 24, (240, 240, 240))
+        x += 40
+    # Something was drawn (symbols produce non-background pixels).
+    from PIL import ImageChops
+    blank = Image.new("RGB", img.size, (0, 0, 0))
+    assert ImageChops.difference(img, blank).getbbox() is not None

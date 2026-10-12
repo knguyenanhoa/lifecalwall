@@ -17,12 +17,12 @@ from datetime import date
 from tkinter import messagebox, ttk
 from typing import Callable, Optional
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 from config import Settings, get_theme, list_theme_names, load_settings, save_settings
 
 log = logging.getLogger("lifecal.settings_ui")
-from renderer import render
+from renderer import PLANET_SYMBOLS, draw_planet_symbol, render
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -31,6 +31,12 @@ from renderer import render
 PREVIEW_W = 540
 PREVIEW_H = 300
 WINDOW_TITLE = "Life Calendar — Settings"
+
+
+def _hex_to_rgb(hex_color: str):
+    """Convert a '#rrggbb' string to an (r, g, b) tuple for Pillow drawing."""
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +194,21 @@ class SettingsWindow:
             command=self._schedule_preview, **chk_style,
         ).grid(row=7, column=0, columnspan=3, sticky="w", pady=2)
 
+        # ---- Planet-symbol legend (help for the conjunction glyphs) ------
+        # The conjunction readout in the space column uses vector planet
+        # symbols instead of names to save space; this legend decodes them.
+        legend_label = tk.Label(
+            frm, text="Planet symbols:", bg="#1e1e2e", fg="#7f849c",
+            font=("Helvetica", 9),
+        )
+        legend_label.grid(row=8, column=0, sticky="w", pady=(0, 2))
+        self._legend_img = self._build_planet_legend(fg=LABEL_FG, bg="#1e1e2e")
+        legend_canvas = tk.Label(frm, image=self._legend_img, bg="#1e1e2e", bd=0)
+        legend_canvas.grid(row=8, column=1, columnspan=2, sticky="w", pady=(0, 2))
+
         # ---- Weather: location ------------------------------------------
         tk.Label(frm, text="Location:", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=8, column=0, sticky="w", pady=4,
+            row=9, column=0, sticky="w", pady=4,
         )
         self._location_var = tk.StringVar(value=self._settings.weather_location)
         location_entry = tk.Entry(
@@ -198,20 +216,20 @@ class SettingsWindow:
             bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=ENTRY_FG,
             relief="flat", bd=4,
         )
-        location_entry.grid(row=8, column=1, sticky="w", pady=4, padx=(8, 0))
+        location_entry.grid(row=9, column=1, sticky="w", pady=4, padx=(8, 0))
         tk.Label(
             frm, text="blank → Ho Chi Minh City", bg="#1e1e2e", fg="#7f849c",
             font=("Helvetica", 9),
-        ).grid(row=8, column=2, sticky="w", padx=(6, 0))
+        ).grid(row=9, column=2, sticky="w", padx=(6, 0))
         self._location_var.trace_add("write", lambda *_: self._schedule_preview())
 
         # ---- Weather: temperature unit ----------------------------------
         tk.Label(frm, text="Temperature unit:", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=9, column=0, sticky="w", pady=4,
+            row=10, column=0, sticky="w", pady=4,
         )
         self._fahrenheit_var = tk.BooleanVar(value=self._settings.weather_fahrenheit)
         unit_frame = tk.Frame(frm, bg="#1e1e2e")
-        unit_frame.grid(row=9, column=1, columnspan=2, sticky="w", pady=4, padx=(8, 0))
+        unit_frame.grid(row=10, column=1, columnspan=2, sticky="w", pady=4, padx=(8, 0))
         radio_style = {"bg": "#1e1e2e", "fg": LABEL_FG, "activebackground": "#1e1e2e",
                        "selectcolor": ENTRY_BG, "relief": "flat"}
         tk.Radiobutton(
@@ -225,11 +243,11 @@ class SettingsWindow:
 
         # ---- Weather: rain display --------------------------------------
         tk.Label(frm, text="Rain chance:", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=10, column=0, sticky="w", pady=4,
+            row=11, column=0, sticky="w", pady=4,
         )
         self._rain_as_pie_var = tk.BooleanVar(value=self._settings.weather_rain_as_pie)
         rain_frame = tk.Frame(frm, bg="#1e1e2e")
-        rain_frame.grid(row=10, column=1, columnspan=2, sticky="w", pady=4, padx=(8, 0))
+        rain_frame.grid(row=11, column=1, columnspan=2, sticky="w", pady=4, padx=(8, 0))
         tk.Radiobutton(
             rain_frame, text="Pie chart", variable=self._rain_as_pie_var, value=True,
             command=self._schedule_preview, **radio_style,
@@ -241,25 +259,25 @@ class SettingsWindow:
 
         # ---- Separator --------------------------------------------------
         tk.Frame(frm, bg="#45475a", height=1).grid(
-            row=11, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
+            row=12, column=0, columnspan=3, sticky="ew", pady=(PAD, PAD // 2),
         )
 
         # ---- Preview canvas ---------------------------------------------
         tk.Label(frm, text="Preview:", bg="#1e1e2e", fg=LABEL_FG).grid(
-            row=12, column=0, sticky="nw", pady=(0, 4),
+            row=13, column=0, sticky="nw", pady=(0, 4),
         )
         self._preview_canvas = tk.Canvas(
             frm, width=PREVIEW_W, height=PREVIEW_H,
             bg="#000000", highlightthickness=0,
         )
         self._preview_canvas.grid(
-            row=13, column=0, columnspan=3, pady=(0, PAD),
+            row=14, column=0, columnspan=3, pady=(0, PAD),
         )
         self._preview_img_ref: Optional[ImageTk.PhotoImage] = None  # keep ref alive
 
         # ---- Buttons ----------------------------------------------------
         btn_frame = tk.Frame(frm, bg="#1e1e2e")
-        btn_frame.grid(row=14, column=0, columnspan=3, sticky="e")
+        btn_frame.grid(row=15, column=0, columnspan=3, sticky="e")
 
         tk.Button(
             btn_frame, text="Apply", command=self._on_apply_click,
@@ -273,6 +291,54 @@ class SettingsWindow:
             bg=ENTRY_BG, fg=LABEL_FG, activebackground="#45475a",
             relief="flat", padx=16, pady=6, cursor="hand2",
         ).pack(side="right")
+
+    # ------------------------------------------------------------------
+    # Planet-symbol legend
+    # ------------------------------------------------------------------
+
+    def _build_planet_legend(self, fg: str, bg: str) -> ImageTk.PhotoImage:
+        """
+        Render a horizontal strip pairing each planet's vector symbol with its
+        name, so the compact conjunction glyphs in the space column can be
+        decoded. Returns a PhotoImage kept alive by the caller.
+        """
+        glyph = 18
+        pad = 6
+        gap = 16
+        name_gap = 4
+        fg_rgb = _hex_to_rgb(fg)
+
+        # Pre-measure each "symbol + name" cell to size the strip.
+        tmp = Image.new("RGB", (1, 1))
+        td = ImageDraw.Draw(tmp)
+        from PIL import ImageFont
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 12)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+
+        def _tw(text):
+            b = td.textbbox((0, 0), text, font=font)
+            return b[2] - b[0]
+
+        cells = [(p, _tw(p)) for p in PLANET_SYMBOLS]
+        width = pad
+        for _p, nw in cells:
+            width += glyph + name_gap + nw + gap
+        width = max(width, 1)
+        height = glyph + 2 * pad
+
+        img = Image.new("RGB", (int(width), int(height)), _hex_to_rgb(bg))
+        d = ImageDraw.Draw(img)
+        x = pad
+        cy = pad
+        for planet, nw in cells:
+            draw_planet_symbol(d, planet, x, cy, glyph, fg_rgb)
+            d.text((x + glyph + name_gap, cy + glyph // 2 - 6), planet,
+                   fill=fg_rgb, font=font)
+            x += glyph + name_gap + nw + gap
+
+        return ImageTk.PhotoImage(img)
 
     # ------------------------------------------------------------------
     # Preview

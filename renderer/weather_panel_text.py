@@ -130,43 +130,65 @@ def kp_label(kp: float) -> str:
     return KP_BANDS[kp_band_index(kp)][1]
 
 
-def aurora_outlook(kp: float) -> str:
-    """
-    A short, plain-language aurora prospect for a Kp value. Higher Kp pushes
-    the auroral oval toward lower (more equatorward) latitudes, so the phrasing
-    escalates from "unlikely" to visibility well away from the poles.
-    """
-    if kp < 3:
-        return "Aurora unlikely"
-    if kp < 5:
-        return "Aurora at high latitudes"
-    if kp < 7:
-        return "Aurora possible mid-latitudes"
-    return "Aurora far from poles"
+# Solar X-ray flare-class scale. Each letter is a 10× step in peak X-ray flux:
+# A (quietest) < B < C < M < X (strongest). Drawn as a segmented bar like UV
+# and Kp, with the colour deepening as activity rises. (upper_letter, color);
+# the letter order below also defines the bar's segment order.
+FLARE_BANDS = [
+    ("A", (90, 150, 200)),   # background / very quiet
+    ("B", (90, 190, 90)),    # low
+    ("C", (230, 200, 60)),   # common, minor
+    ("M", (235, 150, 50)),   # medium — can disrupt radio/polar regions
+    ("X", (220, 70, 60)),    # strong — major events
+]
+_FLARE_LETTERS = [letter for letter, _color in FLARE_BANDS]
 
 
-# NOAA R-scale (radio blackouts, driven by solar flares) → plain-language
-# solar-activity label. R0 means no blackout, i.e. a calm Sun; R1–R5 escalate.
-_R_SCALE_LABELS = {
-    0: "Quiet",
-    1: "Minor flares",
-    2: "Moderate flares",
-    3: "Strong flares",
-    4: "Severe flares",
-    5: "Extreme flares",
-}
+def parse_flare_class(flare_class: Optional[str]):
+    """
+    Parse a flare-class string like "C3.6" into (letter, magnitude), e.g.
+    ("C", 3.6). Returns None when the string is missing or unparseable. The
+    letter is upper-cased; an unknown letter still parses so callers can decide
+    how to treat it.
+    """
+    if not flare_class:
+        return None
+    s = str(flare_class).strip().upper()
+    if not s:
+        return None
+    letter = s[0]
+    try:
+        magnitude = float(s[1:]) if len(s) > 1 else 1.0
+    except ValueError:
+        magnitude = 1.0
+    return letter, magnitude
 
 
-def solar_activity_outlook(r_scale: Optional[int]) -> str:
+def flare_band_index(flare_class: Optional[str]) -> int:
     """
-    A short solar-activity line from the NOAA R-scale, in the same spirit as
-    the aurora outlook, e.g. "Sun: quiet" or "Sun: strong flares". Returns ""
-    when the scale is unknown so the caller can omit the line.
+    Index into FLARE_BANDS for a flare class. Unknown or sub-A classes map to
+    the first (A) band; an unrecognised letter clamps to the strongest band.
     """
-    if r_scale is None:
+    parsed = parse_flare_class(flare_class)
+    if parsed is None:
+        return 0
+    letter, _mag = parsed
+    if letter in _FLARE_LETTERS:
+        return _FLARE_LETTERS.index(letter)
+    # A letter beyond our table (shouldn't happen) → treat as the strongest.
+    return len(FLARE_BANDS) - 1
+
+
+def flare_label(flare_class: Optional[str]) -> str:
+    """
+    Short caption for the flare bar, e.g. "Flare C3.6", or "Flare —" when the
+    class is unknown. Returns "" only when there is nothing to show at all.
+    """
+    parsed = parse_flare_class(flare_class)
+    if parsed is None:
         return ""
-    label = _R_SCALE_LABELS.get(int(r_scale), "active")
-    return f"Sun: {label.lower()}"
+    letter, magnitude = parsed
+    return f"Flare  {letter}{magnitude:.1f}"
 
 
 def code_bucket(code: int) -> str:

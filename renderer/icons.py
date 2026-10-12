@@ -179,3 +179,105 @@ def draw_weather_icon(draw, key: str, x: int, y: int, size: int,
             draw.line([(x + size * 0.08, fy), (x + size * 0.92, fy)],
                       fill=accent, width=max(1, size // 16))
     # "cloudy" / "unknown": the cloud alone is enough.
+
+
+# ---------------------------------------------------------------------------
+# Planetary symbols (vector) — the system fallback fonts lack these glyphs,
+# so the conventional astronomical symbols are drawn as simple shapes, the
+# same approach as the moon and weather icons. Each is drawn to fit a size×size
+# box at (x, y); *weight* scales the stroke width.
+# ---------------------------------------------------------------------------
+
+PLANET_SYMBOLS = ("Mercury", "Venus", "Mars", "Jupiter", "Saturn")
+
+
+def _planet_stroke(size: int) -> int:
+    return max(1, size // 10)
+
+
+def _circle(draw, cx, cy, r, color, w):
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=w)
+
+
+def _cross(draw, cx, top_y, length, color, w):
+    """A plus-cross centred horizontally at cx, spanning vertically from top_y."""
+    half = length / 2
+    midy = top_y + half
+    draw.line([(cx, top_y), (cx, top_y + length)], fill=color, width=w)
+    draw.line([(cx - half, midy), (cx + half, midy)], fill=color, width=w)
+
+
+def draw_planet_symbol(draw, planet: str, x: int, y: int, size: int, color) -> None:
+    """
+    Draw the astronomical symbol for *planet* inside a size×size box at (x, y).
+
+    Schematic but recognizable renditions of the classical glyphs:
+      Mercury ☿  circle with horns above and a cross below
+      Venus   ♀  circle above a cross
+      Mars    ♂  circle with an arrow to the upper-right
+      Jupiter ♃  a stylised numeral-four / zeta with a crossbar
+      Saturn  ♄  a cross above a stylised scythe hook
+    """
+    w = _planet_stroke(size)
+    cx = x + size / 2
+
+    if planet == "Venus":
+        r = size * 0.22
+        cy = y + size * 0.32
+        _circle(draw, cx, cy, r, color, w)
+        _cross(draw, cx, cy + r, size * 0.30, color, w)
+        return
+
+    if planet == "Mercury":
+        r = size * 0.20
+        cy = y + size * 0.42
+        _circle(draw, cx, cy, r, color, w)
+        _cross(draw, cx, cy + r, size * 0.26, color, w)
+        # Horns: a shallow upward arc above the circle.
+        horn_box = [cx - r, y + size * 0.04, cx + r, y + size * 0.30]
+        draw.arc(horn_box, start=200, end=340, fill=color, width=w)
+        return
+
+    if planet == "Mars":
+        r = size * 0.22
+        cy = y + size * 0.60
+        _circle(draw, cx, cy, r, color, w)
+        # Arrow from the circle's upper-right edge to the top-right corner.
+        ax0 = cx + r * 0.7
+        ay0 = cy - r * 0.7
+        ax1 = x + size * 0.88
+        ay1 = y + size * 0.14
+        draw.line([(ax0, ay0), (ax1, ay1)], fill=color, width=w)
+        head = size * 0.22
+        draw.line([(ax1, ay1), (ax1 - head, ay1)], fill=color, width=w)
+        draw.line([(ax1, ay1), (ax1, ay1 + head)], fill=color, width=w)
+        return
+
+    if planet == "Jupiter":
+        # A horizontal baseline crossed by a hooked vertical — a stylised "4".
+        baseline_y = y + size * 0.72
+        draw.line([(cx - size * 0.02, y + size * 0.18),
+                   (cx - size * 0.02, baseline_y)], fill=color, width=w)
+        # Hook at the top-left, like the glyph's rounded head.
+        hook_box = [x + size * 0.14, y + size * 0.12,
+                    cx + size * 0.04, y + size * 0.46]
+        draw.arc(hook_box, start=90, end=270, fill=color, width=w)
+        draw.line([(x + size * 0.20, baseline_y),
+                   (x + size * 0.80, baseline_y)], fill=color, width=w)
+        return
+
+    if planet == "Saturn":
+        # A cross up top above a scythe-like hook.
+        stem_x = cx - size * 0.10
+        draw.line([(stem_x, y + size * 0.16),
+                   (stem_x, y + size * 0.58)], fill=color, width=w)
+        draw.line([(stem_x - size * 0.14, y + size * 0.24),
+                   (stem_x + size * 0.14, y + size * 0.24)], fill=color, width=w)
+        # The hook curving down and to the right off the stem's foot.
+        hook_box = [stem_x - size * 0.02, y + size * 0.46,
+                    cx + size * 0.30, y + size * 0.88]
+        draw.arc(hook_box, start=160, end=20, fill=color, width=w)
+        return
+
+    # Unknown planet: a bare circle so something still shows.
+    _circle(draw, cx, y + size / 2, size * 0.22, color, w)

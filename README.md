@@ -59,7 +59,7 @@ Open it any time by:
 | Show year labels | Toggle the year axis labels. |
 | Show week labels | Toggle the week axis labels. |
 | Show weather | Toggle the weather panel in the bottom zone. |
-| Show space weather | Toggle an extra column (left of the weather panel) with the geomagnetic Kp index + aurora outlook, a solar-activity level (NOAA R-scale), the solar-cycle phase, and visible planets / conjunctions. Kp and activity come from NOAA SWPC; cycle and planets are computed locally. |
+| Show space weather | Toggle an extra column (left of the weather panel) with the geomagnetic Kp index + aurora outlook, a solar-activity level (NOAA R-scale), the solar-cycle phase, and visible planets / conjunctions. Kp and activity come from NOAA SWPC; cycle and planets are computed locally. Conjunctions are shown with vector planet symbols — the settings window has a legend decoding them. |
 | Location | Place name for the weather (e.g. `Ho Chi Minh City`). Blank falls back to the default location. |
 | Temperature unit | `°C` or `°F`. |
 | Rain chance | Show the hourly rain chance as a mini pie chart or as a percentage. |

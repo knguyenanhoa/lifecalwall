@@ -16,13 +16,14 @@ from weather import (
     _cache_matches,
 )
 from renderer import (
-    _aurora_outlook,
     _code_bucket,
+    _flare_band_index,
+    _flare_label,
     _format_gmt_offset,
     _kp_band_index,
     _kp_label,
     _next_solar_event,
-    _solar_activity_outlook,
+    _parse_flare_class,
     _summarize_week,
     _uv_band_index,
     _uv_label,
@@ -127,25 +128,44 @@ def test_kp_band_index_is_monotonic():
     assert indices == [0, 1, 2, 3, 4, 5]
 
 
-def test_aurora_outlook_escalates_with_kp():
-    assert _aurora_outlook(1) == "Aurora unlikely"
-    assert "high latitudes" in _aurora_outlook(4)
-    assert "mid-latitudes" in _aurora_outlook(6)
-    assert _aurora_outlook(8) == "Aurora far from poles"
-
-
 # ---------------------------------------------------------------------------
-# Solar activity (NOAA R-scale → plain-language label)
+# Solar activity (X-ray flare class scale A/B/C/M/X)
 # ---------------------------------------------------------------------------
 
-def test_solar_activity_outlook_quiet_and_active():
-    assert _solar_activity_outlook(0) == "Sun: quiet"
-    assert _solar_activity_outlook(3) == "Sun: strong flares"
-    assert _solar_activity_outlook(5) == "Sun: extreme flares"
+@pytest.mark.parametrize(
+    "flare, band",
+    [
+        ("A1.0", 0), ("A9.9", 0),
+        ("B6.0", 1),
+        ("C3.6", 2),
+        ("M1.4", 3),
+        ("X2.1", 4), ("X15.0", 4),
+    ],
+)
+def test_flare_band_index(flare, band):
+    assert _flare_band_index(flare) == band
 
 
-def test_solar_activity_outlook_blank_when_unknown():
-    assert _solar_activity_outlook(None) == ""
+def test_flare_band_index_unknown_is_quietest():
+    assert _flare_band_index(None) == 0
+    assert _flare_band_index("") == 0
+
+
+def test_flare_label_formats_class():
+    assert _flare_label("C3.6") == "Flare  C3.6"
+    assert _flare_label("M1.0") == "Flare  M1.0"
+
+
+def test_flare_label_blank_when_unknown():
+    assert _flare_label(None) == ""
+
+
+def test_parse_flare_class():
+    assert _parse_flare_class("C3.6") == ("C", 3.6)
+    assert _parse_flare_class("x2") == ("X", 2.0)
+    assert _parse_flare_class("B") == ("B", 1.0)
+    assert _parse_flare_class(None) is None
+    assert _parse_flare_class("") is None
 
 
 # ---------------------------------------------------------------------------
@@ -287,14 +307,21 @@ def test_fetch_space_weather_tolerates_failure(monkeypatch):
     assert weather_mod._fetch_space_weather() == (None, None)
 
 
-def test_fetch_solar_activity_reads_current_r_scale(monkeypatch):
-    # NOAA scales product: "0" is the current entry; R.Scale is the level.
-    scales = {
-        "0": {"R": {"Scale": "2", "Text": "moderate"}, "S": {"Scale": "0"}, "G": {"Scale": "0"}},
-        "1": {"R": {"Scale": None, "MinorProb": "45"}},
-    }
-    monkeypatch.setattr(weather_mod, "_http_get_json", lambda url: scales)
-    assert weather_mod._fetch_solar_activity() == 2
+def test_fetch_solar_activity_reads_current_flare_class(monkeypatch):
+    # GOES latest-flares product: array of records with current/max class.
+    flares = [{
+        "time_tag": "2026-10-12T18:09:00Z",
+        "current_class": "C3.6",
+        "max_class": "M1.4",
+    }]
+    monkeypatch.setattr(weather_mod, "_http_get_json", lambda url: flares)
+    assert weather_mod._fetch_solar_activity() == "C3.6"
+
+
+def test_fetch_solar_activity_falls_back_to_max_class(monkeypatch):
+    flares = [{"time_tag": "t", "current_class": None, "max_class": "B8.8"}]
+    monkeypatch.setattr(weather_mod, "_http_get_json", lambda url: flares)
+    assert weather_mod._fetch_solar_activity() == "B8.8"
 
 
 def test_fetch_solar_activity_tolerates_failure(monkeypatch):

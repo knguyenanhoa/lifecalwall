@@ -24,8 +24,10 @@ from .draw_utils import (
     text_size as _text_size,
 )
 from .icons import (
+    PLANET_SYMBOLS,
     draw_cloud as _draw_cloud,
     draw_moon_phase as _draw_moon_phase,
+    draw_planet_symbol,
     draw_rain_pie as _draw_rain_pie,
     draw_sun as _draw_sun,
     draw_weather_icon as _draw_weather_icon,
@@ -42,24 +44,26 @@ from .grid import (
     weeks_elapsed as _weeks_elapsed,
 )
 from .weather_panel import (
+    draw_flare_bar as _draw_flare_bar,
     draw_kp_bar as _draw_kp_bar,
     draw_uv_bar as _draw_uv_bar,
     draw_weather as _draw_weather,
 )
 from .weather_panel_text import (
-    aurora_outlook as _aurora_outlook,
     code_bucket as _code_bucket,
     format_dates as _format_dates,
     format_gmt_offset as _format_gmt_offset,
     format_hour_rain as _format_hour_rain,
     kp_band_index as _kp_band_index,
     kp_label as _kp_label,
+    flare_band_index as _flare_band_index,
+    flare_label as _flare_label,
     next_solar_event as _next_solar_event,
-    solar_activity_outlook as _solar_activity_outlook,
+    parse_flare_class as _parse_flare_class,
     summarize_week as _summarize_week,
     uv_band_index as _uv_band_index,
     uv_label as _uv_label,
     weather_condition as _weather_condition,
 )
 
-__all__ = ["render", "render_weather_only"]
+__all__ = ["render", "render_weather_only", "draw_planet_symbol", "PLANET_SYMBOLS"]

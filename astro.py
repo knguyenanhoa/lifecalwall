@@ -236,12 +236,16 @@ def visible_planets(when: Optional[datetime] = None) -> List[Tuple[str, str]]:
 
 
 def planet_conjunctions(when: Optional[datetime] = None,
-                        threshold_deg: float = 5.0) -> List[Tuple[str, str, float]]:
+                        threshold_deg: float = 10.0) -> List[Tuple[str, str, float]]:
     """
     Return [(planet_a, planet_b, separation_deg), …] for pairs of naked-eye
     planets closer than *threshold_deg* in ecliptic longitude at *when*, both
     being clear of the Sun's glare. Sorted closest-first. Approximate (longitude
     only), which is enough to flag an eye-catching pairing in the sky.
+
+    The default 10° matches the span commonly cited for a naked-eye "close
+    pairing" — tight enough to be noteworthy, loose enough that the line
+    actually appears through the year rather than only on rare exact meetings.
     """
     if when is None:
         when = datetime.now()
