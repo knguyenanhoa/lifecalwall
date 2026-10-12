@@ -218,8 +218,6 @@ def _paint_weather(
     # Sun event + day length + 7-day overview ---------------------------
     if layout.solar is not None:
         _at(layout.solar, detail_font, bright)
-    if layout.daylen is not None:
-        _at(layout.daylen, detail_font, bright)
     if layout.week is not None:
         _at(layout.week, detail_font, bright)
 

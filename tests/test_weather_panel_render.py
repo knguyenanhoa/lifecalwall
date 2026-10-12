@@ -117,8 +117,8 @@ def test_weather_panel_blank_when_no_report(monkeypatch):
 
 # Snapshot digests captured from the pre-refactor implementation. See
 # tests/conftest or the generating command in the PR notes.
-PIE_MODE_DIGEST = "95ae5a20a4a87f5d754fd6b99d4903475fc4ae5fe37bdf796d1651250ad65ad7"
-PCT_MODE_DIGEST = "4260f1bee419faed79535afe5fa00a6efc112af0479ad119c2f8baf50c913943"
+PIE_MODE_DIGEST = "82a96eda3bbb7ade6d017cca75fa980ff634ddaaf49984caf14054231e59adef"
+PCT_MODE_DIGEST = "2321d083fa59749f93dba3451a740003675532d54099e94559cc7c1a80eaebdc"
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +310,7 @@ def test_space_column_paints_without_error(monkeypatch):
 # Day length (main column) + expanded space column
 # ---------------------------------------------------------------------------
 
-def test_day_length_line_present_in_main_column(monkeypatch):
+def test_sun_line_includes_daylight_in_parentheses(monkeypatch):
     from renderer.weather_layout import build_weather_layout
 
     monkeypatch.setattr(wl, "format_dates",
@@ -324,12 +324,12 @@ def test_day_length_line_present_in_main_column(monkeypatch):
         Theme(name="test"), BASE_FONT,
         today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
     )
-    assert layout.daylen is not None
-    # Sunrise 05:42 → Sunset 18:03 ≈ 12h 21m.
-    assert layout.daylen.text == "Daylight  12h 21m"
+    # Midday → next event is sunset 18:03; daylight 05:42→18:03 ≈ 12h 21m.
+    assert layout.solar is not None
+    assert layout.solar.text == "Sunset: 18:03 (daylight: 12h 21m)"
 
 
-def test_day_length_absent_without_sun_times(monkeypatch):
+def test_sun_line_omits_daylight_without_sun_times(monkeypatch):
     from renderer.weather_layout import build_weather_layout
 
     monkeypatch.setattr(wl, "format_dates",
@@ -338,6 +338,7 @@ def test_day_length_absent_without_sun_times(monkeypatch):
     rep = _fixed_report()
     rep.sunrise_today = ""
     rep.sunset_today = ""
+    rep.sunrise_tomorrow = ""
     img = Image.new("RGB", (CANVAS_W, 420), (10, 10, 20))
     draw = ImageDraw.Draw(img)
     layout = build_weather_layout(
@@ -346,7 +347,8 @@ def test_day_length_absent_without_sun_times(monkeypatch):
         Theme(name="test"), BASE_FONT,
         today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
     )
-    assert layout.daylen is None
+    # No sun times at all → no solar line.
+    assert layout.solar is None
 
 
 def test_space_column_includes_solar_and_cycle_and_planets(monkeypatch):

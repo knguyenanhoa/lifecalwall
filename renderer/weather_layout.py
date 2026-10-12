@@ -235,7 +235,6 @@ class WeatherLayout:
 
     uv_bar: Optional[UVBar] = None
     solar: Optional[TextPiece] = None
-    daylen: Optional[TextPiece] = None
     week: Optional[TextPiece] = None
     footer: Optional[TextPiece] = None
     space: Optional[SpaceColumn] = None
@@ -301,14 +300,17 @@ def build_weather_layout(
     tz = f"GMT{gmt}" if gmt else ""
     footer_text = "  ·  ".join(t for t in (place, tz) if t)
 
-    solar = next_solar_event(report, now)
-    solar_text = f"{solar[0]}  {solar[1]}" if solar else ""
-
-    # Day length for the current day, shown under the sun event in the main
-    # column. Derived from today's sunrise/sunset the report already carries.
+    # Next sun event, with today's daylight length in parentheses, e.g.
+    # "Sunrise: 05:42 (daylight: 11h 55m)".
     import astro
+    solar = next_solar_event(report, now)
     daylen = astro.day_length_text(report.sunrise_today, report.sunset_today)
-    daylen_text = f"Daylight  {daylen}" if daylen else ""
+    if solar:
+        solar_text = f"{solar[0]}: {solar[1]}"
+        if daylen:
+            solar_text += f" (daylight: {daylen})"
+    else:
+        solar_text = ""
 
     icon_key, _ = weather_condition(report.weather_code)
     has_icon = icon_key != "unknown"
@@ -366,7 +368,6 @@ def build_weather_layout(
     lh_num_w = max(high_num_w, low_num_w)
     lh_label_num_gap = base_font_size // 2
     solar_w, solar_h = tsize(solar_text, detail_font) if solar_text else (0, 0)
-    daylen_w, daylen_h = tsize(daylen_text, detail_font) if daylen_text else (0, 0)
     _, row_h = tsize("0:00", detail_font)
 
     icon_size = int(temp_h * 1.5) if has_icon else 0
@@ -489,7 +490,7 @@ def build_weather_layout(
     # fold it into the slack the 7-day summary may use before overflow.
     space_prefix_w = (space_w + column_gap) if show_space else 0
 
-    structural_left_w = max(hero_w, uv_w, solar_w, daylen_w)
+    structural_left_w = max(hero_w, uv_w, solar_w)
     if week_text:
         available = canvas_w - 2 * pad - space_prefix_w - column_gap - right_w
         week_budget = max(structural_left_w, available)
@@ -502,8 +503,6 @@ def build_weather_layout(
         left_h += line_gap + uv_h
     if solar_text:
         left_h += line_gap + solar_h
-    if daylen_text:
-        left_h += line_gap + daylen_h
     if week_text:
         left_h += line_gap + week_h
 
@@ -520,8 +519,6 @@ def build_weather_layout(
         left_row_heights.append(uv_h)
     if solar_text:
         left_row_heights.append(solar_h)
-    if daylen_text:
-        left_row_heights.append(daylen_h)
     if week_text:
         left_row_heights.append(week_h)
     left_gap = justified_gap(sum(left_row_heights), len(left_row_heights) - 1, line_gap)
@@ -677,12 +674,6 @@ def build_weather_layout(
         solar_piece = TextPiece(solar_text, left_x, ly)
         ly += solar_h
 
-    daylen_piece = None
-    if daylen_text:
-        ly += left_gap
-        daylen_piece = TextPiece(daylen_text, left_x, ly)
-        ly += daylen_h
-
     week_piece = None
     if week_text:
         ly += left_gap
@@ -741,7 +732,6 @@ def build_weather_layout(
         forecast_rows=forecast_rows,
         uv_bar=uv_bar,
         solar=solar_piece,
-        daylen=daylen_piece,
         week=week_piece,
         footer=footer_piece,
         space=space_column,
