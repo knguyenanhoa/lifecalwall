@@ -117,8 +117,8 @@ def test_weather_panel_blank_when_no_report(monkeypatch):
 
 # Snapshot digests captured from the pre-refactor implementation. See
 # tests/conftest or the generating command in the PR notes.
-PIE_MODE_DIGEST = "f6788862e1c22f11056582aa51f04c5f9c6a695518722bc7dc4d194098d5c4f5"
-PCT_MODE_DIGEST = "a7dc7f5accbc947fae979253d7c35a106e004ae09f1ecc8a351ca20609048ae9"
+PIE_MODE_DIGEST = "8ec51c031b6b3bf883fe948bb85d4902c396192005388ba234325304a4854ce5"
+PCT_MODE_DIGEST = "0a6c2e9c172c6a3a6394666a284dda3e19112ece856e61629e35a6418ebd338d"
 
 
 # ---------------------------------------------------------------------------
@@ -166,58 +166,53 @@ def _long_summary_report() -> WeatherReport:
     return rep
 
 
-def test_long_week_summary_does_not_clip_forecast(monkeypatch):
+def test_long_week_summary_wraps_within_fixed_column(monkeypatch):
     from renderer.draw_utils import resolve_font, text_size
     from renderer.weather_layout import build_weather_layout
 
     monkeypatch.setattr(weather_mod, "get_weather", lambda **kw: _long_summary_report())
 
-    # A deliberately narrow canvas: before the fix, the long summary widened
-    # the left column and ran the forecast's rain mm text off the right edge.
-    narrow_w = 460
-    img = Image.new("RGB", (narrow_w, 420), (10, 10, 20))
+    img = Image.new("RGB", (CANVAS_W, 420), (10, 10, 20))
     draw = ImageDraw.Draw(img)
     layout = build_weather_layout(
-        draw, _long_summary_report(), narrow_w, 0, 420,
+        draw, _long_summary_report(), CANVAS_W, 0, 420,
         Settings(weather_rain_as_pie=True, weather_location="Ho Chi Minh City"),
         Theme(name="test"), BASE_FONT,
         today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
     )
 
     detail_font = resolve_font(max(9, BASE_FONT - 1))
+    # The summary is a list of wrapped lines (fixed column), not one string.
+    assert isinstance(layout.week, list) and layout.week
+    assert len(layout.week) <= 2  # WEEK_MAX_LINES
+    # Each wrapped line fits the fixed column width (the forecast's left edge is
+    # a safe upper bound on the center column's right edge).
+    col_right = layout.forecast_rows[0].icon_x
+    for piece in layout.week:
+        w = text_size(draw, piece.text, detail_font)[0]
+        assert piece.x + w <= col_right + 2
+    # The full phrase is preserved across the wrapped lines.
+    joined = " ".join(p.text for p in layout.week)
+    assert "an even mix of rainy and cloudy" in joined
 
-    def row_right_edge(row):
-        if row.rain_text is not None:
-            return row.rain_text.x + text_size(draw, row.rain_text.text, detail_font)[0]
-        return row.pie_cx + row.pie_r
 
-    rightmost = max(row_right_edge(r) for r in layout.forecast_rows)
-    # The forecast's rightmost content must stay within the canvas.
-    assert rightmost <= narrow_w, f"forecast content clipped: {rightmost} > {narrow_w}"
-
-    # And the summary should have been truncated (ellipsis) to make it fit.
-    assert layout.week is not None
-    assert layout.week.text.endswith("…")
-
-
-def test_week_summary_shown_in_full_on_wide_canvas(monkeypatch):
+def test_week_summary_single_line_when_short(monkeypatch):
     from renderer.weather_layout import build_weather_layout
 
-    monkeypatch.setattr(weather_mod, "get_weather", lambda **kw: _long_summary_report())
+    rep = _fixed_report()
+    rep.weekly_codes = [0, 1, 0, 1]  # → "mostly sunny" (short)
+    monkeypatch.setattr(weather_mod, "get_weather", lambda **kw: rep)
 
-    wide_w = 1600
-    img = Image.new("RGB", (wide_w, 420), (10, 10, 20))
+    img = Image.new("RGB", (CANVAS_W, 420), (10, 10, 20))
     draw = ImageDraw.Draw(img)
     layout = build_weather_layout(
-        draw, _long_summary_report(), wide_w, 0, 420,
+        draw, rep, CANVAS_W, 0, 420,
         Settings(weather_rain_as_pie=True, weather_location="Ho Chi Minh City"),
         Theme(name="test"), BASE_FONT,
         today=date(2026, 10, 11), now=datetime(2026, 10, 11, 14, 30),
     )
-    # Plenty of room → full phrase, no ellipsis.
-    assert layout.week is not None
-    assert layout.week.text == "7-day: an even mix of rainy and cloudy"
-    assert not layout.week.text.endswith("…")
+    assert isinstance(layout.week, list) and len(layout.week) == 1
+    assert layout.week[0].text == "7-day: mostly sunny"
 
 
 # ---------------------------------------------------------------------------

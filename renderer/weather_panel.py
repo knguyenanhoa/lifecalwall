@@ -218,8 +218,8 @@ def _paint_weather(
     # Sun event + day length + 7-day overview ---------------------------
     if layout.solar is not None:
         _at(layout.solar, detail_font, bright)
-    if layout.week is not None:
-        _at(layout.week, detail_font, bright)
+    for wk in layout.week:
+        _at(wk, detail_font, bright)
 
     # Forecast rows ------------------------------------------------------
     pie_track = blend(theme.background, theme.label_color, 0.18)

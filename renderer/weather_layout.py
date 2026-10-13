@@ -74,6 +74,28 @@ def _truncate_to_width(draw, text: str, font, max_width: int) -> str:
     return ellipsis
 
 
+def _wrap_to_width(draw, text: str, font, max_width: int):
+    """
+    Greedily wrap *text* into a list of lines that each fit *max_width* pixels
+    in *font*. A single word longer than the width is left on its own line
+    rather than split. Returns [text] when it already fits or max_width is
+    non-positive.
+    """
+    if max_width <= 0 or text_size(draw, text, font)[0] <= max_width:
+        return [text]
+    lines, cur = [], ""
+    for word in text.split(" "):
+        trial = f"{cur} {word}".strip()
+        if cur and text_size(draw, trial, font)[0] > max_width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = trial
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 # ---------------------------------------------------------------------------
 # Positioned pieces — each carries the absolute coordinates the paint pass uses
 # ---------------------------------------------------------------------------
@@ -235,7 +257,7 @@ class WeatherLayout:
 
     uv_bar: Optional[UVBar] = None
     solar: Optional[TextPiece] = None
-    week: Optional[TextPiece] = None
+    week: List[TextPiece] = field(default_factory=list)  # 7-day summary, wrapped
     footer: Optional[TextPiece] = None
     space: Optional[SpaceColumn] = None
 
@@ -273,7 +295,7 @@ def build_weather_layout(
     # Vertical rhythm.
     line_gap = base_font_size
     row_gap = max(6, base_font_size // 2)
-    column_gap = base_font_size * 4
+    column_gap = int(base_font_size * 5.5)
 
     # Block framing: the pill's inner padding and the gap from the zone edge.
     # Defined here (not just at the anchor step) because the 7-day summary's
@@ -455,9 +477,9 @@ def build_weather_layout(
 
     # Width is driven by the widest line; give the Kp bar a sensible minimum so
     # its six segments stay legible, matching the UV bar's floor.
-    space_lines_w = max((lw for _k, _t, lw, _lh in space_lines), default=0)
-    space_w = max(space_head_w, space_lines_w, planets_w, conj_w,
-                  base_font_size * 10) if show_space else 0
+    # Space column uses the same fixed width as the others (set below as col_w).
+    # Measured content widths are retained only for internal left-alignment.
+    space_w = 0  # finalized to col_w once col_w is known (see fixed geometry)
     if show_space:
         space_h = space_hero_h + line_gap + kp_bar_h
         if show_flare:
@@ -498,25 +520,39 @@ def build_weather_layout(
     # block would exceed the canvas (block = pad + left + column_gap + right +
     # pad). On a wide display that lets the summary show in full; on a narrow
     # one it is truncated with an ellipsis rather than overflowing.
-    # The optional space column (plus its gap) also eats horizontal room, so
-    # fold it into the slack the 7-day summary may use before overflow.
-    space_prefix_w = (space_w + column_gap) if show_space else 0
+    # ---- Fixed geometry -----------------------------------------------------
+    # The widget does not breathe with content: all columns share one fixed
+    # width derived from the base font (so it scales with the font but never
+    # resizes to fit text), and the overall block width is fixed. Dynamic
+    # content (the 7-day summary) gets a fixed vertical slot and wraps/truncates
+    # into it rather than growing the block.
+    col_w = max(base_font_size * 13, forecast_w)  # one width for every column
+    space_w = col_w
+    space_prefix_w = (col_w + column_gap) if show_space else 0
 
-    structural_left_w = max(hero_w, uv_w, solar_w)
+    left_w = col_w
+    right_w = col_w
+
+    # 7-day summary: wrap into the fixed column width, cap at WEEK_MAX_LINES,
+    # truncating the last shown line with "…" if the text still overflows.
+    WEEK_MAX_LINES = 2
+    week_lines = []
     if week_text:
-        available = canvas_w - 2 * pad - space_prefix_w - column_gap - right_w
-        week_budget = max(structural_left_w, available)
-        week_text = _truncate_to_width(draw, week_text, detail_font, week_budget)
-    week_w, week_h = tsize(week_text, detail_font) if week_text else (0, 0)
+        wrapped = _wrap_to_width(draw, week_text, detail_font, col_w)
+        if len(wrapped) > WEEK_MAX_LINES:
+            wrapped = wrapped[:WEEK_MAX_LINES]
+            wrapped[-1] = _truncate_to_width(draw, wrapped[-1] + " …", detail_font, col_w)
+        week_lines = wrapped
+    # Fixed slot height for the summary: always WEEK_MAX_LINES tall so the block
+    # height stays constant whether the text wraps to one line or two.
+    week_slot_h = WEEK_MAX_LINES * detail_line_h + (WEEK_MAX_LINES - 1) * (line_gap // 2)
 
-    left_w = max(structural_left_w, week_w)
     left_h = hero_h
     if show_uv:
         left_h += line_gap + uv_h
     if solar_text:
         left_h += line_gap + solar_h
-    if week_text:
-        left_h += line_gap + week_h
+    left_h += line_gap + week_slot_h   # summary slot is always reserved
 
     body_w = space_prefix_w + left_w + column_gap + right_w
     body_h = max(space_h, left_h, right_h)
@@ -531,18 +567,21 @@ def build_weather_layout(
         left_row_heights.append(uv_h)
     if solar_text:
         left_row_heights.append(solar_h)
-    if week_text:
-        left_row_heights.append(week_h)
+    left_row_heights.append(week_slot_h)  # fixed summary slot, always present
     left_gap = justified_gap(sum(left_row_heights), len(left_row_heights) - 1, line_gap)
     right_gap = justified_gap(len(rows_text) * hour_row_h,
                               max(0, len(rows_text) - 1), row_gap)
 
-    footer_w, footer_h = tsize(footer_text, detail_font) if footer_text else (0, 0)
+    # Footer gets a fixed-height slot (one detail line) whether or not there's
+    # text, so the block height doesn't change when location/tz are absent.
+    footer_h = detail_line_h
+    footer_w = tsize(footer_text, detail_font)[0] if footer_text else 0
 
-    block_w = max(date_line_w, body_w, footer_w)
-    block_h = date_line_h + line_gap + body_h
-    if footer_text:
-        block_h += line_gap + footer_h
+    # Fixed block dimensions: the columns plus their gaps, never content-fit.
+    # Date line and footer are centered within this fixed width (and truncated
+    # to it if ever longer), so they can't widen the block.
+    block_w = body_w
+    block_h = date_line_h + line_gap + body_h + line_gap + footer_h
 
     # ---- Absolute anchors ---------------------------------------------------
     # Center horizontally, but never let the (pill-padded) block run off the
@@ -680,19 +719,25 @@ def build_weather_layout(
     uv_bar = None
     if show_uv:
         ly += left_gap
-        uv_bar = UVBar(x=left_x, y=ly, width=uv_w, value=uv_value)
+        uv_bar = UVBar(x=left_x, y=ly, width=col_w, value=uv_value)
         ly += uv_h
 
     solar_piece = None
     if solar_text:
         ly += left_gap
-        solar_piece = TextPiece(solar_text, left_x, ly)
+        # Keep the sun line within the fixed column.
+        solar_piece = TextPiece(_truncate_to_width(draw, solar_text, detail_font, col_w),
+                                left_x, ly)
         ly += solar_h
 
-    week_piece = None
-    if week_text:
-        ly += left_gap
-        week_piece = TextPiece(week_text, left_x, ly)
+    # 7-day summary in its fixed slot, wrapped across up to WEEK_MAX_LINES.
+    ly += left_gap
+    week_pieces = []
+    wy = ly
+    for line in week_lines:
+        week_pieces.append(TextPiece(line, left_x, wy))
+        wy += detail_line_h + (line_gap // 2)
+    ly += week_slot_h
 
     # ---- Forecast rows ------------------------------------------------------
     hourly_temps = [h.temperature for h in report.hours]
@@ -737,6 +782,8 @@ def build_weather_layout(
     # ---- Footer -------------------------------------------------------------
     footer_piece = None
     if footer_text:
+        footer_text = _truncate_to_width(draw, footer_text, detail_font, block_w)
+        footer_w = tsize(footer_text, detail_font)[0]
         footer_y = by + block_h - footer_h
         footer_piece = TextPiece(footer_text, bx + (block_w - footer_w) // 2, footer_y)
 
@@ -747,7 +794,7 @@ def build_weather_layout(
         forecast_rows=forecast_rows,
         uv_bar=uv_bar,
         solar=solar_piece,
-        week=week_piece,
+        week=week_pieces,
         footer=footer_piece,
         space=space_column,
         rain_as_pie=rain_as_pie,
