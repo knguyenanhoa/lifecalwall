@@ -179,6 +179,21 @@ def flare_band_index(flare_class: Optional[str]) -> int:
     return len(FLARE_BANDS) - 1
 
 
+# Approximate naked-eye colours for the planet dots on the sky strip, and a
+# relative-prominence weight (roughly by typical apparent brightness) used to
+# size the dots: Venus brightest/largest down to Mercury smallest.
+PLANET_COLORS = {
+    "Mercury": (170, 160, 150),   # grey-tan
+    "Venus":   (245, 240, 215),   # bright pale yellow-white
+    "Mars":    (210, 110, 80),    # reddish
+    "Jupiter": (225, 200, 160),   # warm cream
+    "Saturn":  (210, 195, 150),   # pale gold
+}
+PLANET_PROMINENCE = {
+    "Venus": 1.0, "Jupiter": 0.82, "Mars": 0.64, "Saturn": 0.58, "Mercury": 0.5,
+}
+
+
 def flare_label(flare_class: Optional[str]) -> str:
     """
     Short caption for the flare bar, e.g. "Flare C3.6", or "Flare —" when the

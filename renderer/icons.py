@@ -281,3 +281,7 @@ def draw_planet_symbol(draw, planet: str, x: int, y: int, size: int, color) -> N
 
     # Unknown planet: a bare circle so something still shows.
     _circle(draw, cx, y + size / 2, size * 0.22, color, w)
+
+
+# Visibility-window labels are now simple letters (E / A / M) drawn as text in
+# the layout, so no vector label icon is needed here.

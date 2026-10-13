@@ -28,6 +28,8 @@ from config import Settings, Theme
 
 from .draw_utils import resolve_font, text_size
 from .weather_panel_text import (
+    PLANET_COLORS,
+    PLANET_PROMINENCE,
     flare_band_index,
     flare_label,
     format_dates,
@@ -181,49 +183,42 @@ class PlanetGlyph:
 
 
 @dataclass
-class Conjunction:
-    """
-    A planetary conjunction row: two planet glyphs and a separation label,
-    e.g. [♀] [♃] "3°". Drawn with vector symbols rather than names to stay
-    compact. The legend (symbol → planet) lives in the settings window.
-    """
-    glyph_a: PlanetGlyph
-    glyph_b: PlanetGlyph
-    sep: TextPiece
+class PlanetDot:
+    """A planet as a coloured filled circle on the sky strip."""
+    planet: str
+    cx: int
+    cy: int
+    radius: int
+    color: Tuple[int, int, int]
 
 
 @dataclass
-class PlanetEntry:
-    """One visible planet in the planets row: its glyph and a short tag."""
-    glyph: PlanetGlyph
-    tag: TextPiece          # visibility code, e.g. "ev" / "mo" / "night"
-
-
-@dataclass
-class PlanetsRow:
+class SkyStrip:
     """
-    The "currently visible planets" row, drawn as vector symbols (each with a
-    short visibility tag) rather than planet names, to stay compact. The legend
-    in the settings window decodes the symbols.
+    A night-sky strip spanning the space column: a horizontal gradient track
+    (dusk on the left → midnight centre → dawn on the right) with the visible
+    planets placed along it as coloured circles — evening planets toward the
+    left, all-night planets centred, morning planets toward the right. Circle
+    size encodes rough prominence (Venus largest, Mercury smallest). A close
+    conjunction naturally shows as two dots nearly touching.
     """
-    entries: List["PlanetEntry"]
+    track: Tuple[int, int, int, int]      # the gradient track rect
+    dots: List["PlanetDot"] = field(default_factory=list)
 
 
 @dataclass
 class SpaceColumn:
     """
-    The optional space-weather column (leftmost): a heading, the Kp bar, and a
-    stack of readouts (aurora, solar activity, solar cycle, a vector planets
-    row, and a vector conjunction row). All positions absolute; present only
-    when enabled. Each line is optional so the column collapses cleanly when
-    data is missing.
+    The optional space-weather column (leftmost): a night-sky strip hero (the
+    visible planets as coloured dots), then the Kp and flare bars and the
+    solar-cycle line. All positions absolute; present only when enabled, and
+    each piece is optional so the column collapses cleanly when data is absent.
     """
     heading: TextPiece
     kp_bar: KpBar
     flare_bar: Optional[FlareBar] = None
     solar_cycle: Optional[TextPiece] = None
-    planets: Optional["PlanetsRow"] = None
-    conjunction: Optional[Conjunction] = None
+    sky: Optional["SkyStrip"] = None
 
 
 @dataclass
@@ -353,17 +348,21 @@ def build_weather_layout(
     flare_class = report.flare_class if show_space else None
     show_flare = show_space and parse_flare_class(flare_class) is not None
     # Visible planets as structured (planet, visibility) pairs, drawn with
-    # vector symbols + a short tag instead of names (legend in settings).
-    _VIS_TAG = {"evening sky": "ev", "morning sky": "mo", "visible all night": "night"}
+    # vector symbols, grouped into three visibility windows (evening → all
+    # night → morning). visible_planets() already returns them near→far from
+    # the Sun, so each window's list keeps that order.
+    _VIS_WINDOW = {"evening sky": "evening", "visible all night": "night",
+                   "morning sky": "morning"}
+    _WINDOW_ORDER = ("evening", "night", "morning")
     visible = astro.visible_planets(now) if show_space else []
-    planets_entries = [(p, _VIS_TAG.get(label, label)) for p, label in visible]
-    # Closest current conjunction as a structured pair, drawn with vector
-    # planet symbols instead of names (the legend lives in the settings help).
-    conjunction_pair = None
-    if show_space:
-        pairs = astro.planet_conjunctions(now)
-        if pairs:
-            conjunction_pair = pairs[0]   # (planet_a, planet_b, sep_deg)
+    planets_by_window = {w: [] for w in _WINDOW_ORDER}
+    for planet, label in visible:
+        win = _VIS_WINDOW.get(label)
+        if win:
+            planets_by_window[win].append(planet)
+    any_planets = bool(visible)
+    # Conjunctions are no longer a separate row — the sky strip conveys them by
+    # placing the two planets' dots nearly touching.
 
     week_summary = summarize_week(report.weekly_codes)
     week_text = f"7-day: {week_summary}" if week_summary else ""
@@ -428,51 +427,12 @@ def build_weather_layout(
         lw, lh = tsize(solar_cycle_text, detail_font)
         space_lines.append(("solar_cycle", solar_cycle_text, lw, lh))
 
-    # Glyph geometry shared by the planets row and the conjunction row. Planet
-    # symbols carry fine detail (horns, arrows, hooks), so draw them larger
-    # than the text line height — roughly 1.6× — to stay legible; the rows are
-    # sized to this taller glyph so nothing clips.
-    glyph_sz = max(detail_line_h + 4, int(detail_line_h * 1.6))
-    glyph_gap = max(3, base_font_size // 4)
-
-    # Planets row: [symbol][tag] per visible planet, drawn with vector symbols
-    # instead of names. Measure its total width and height.
-    tag_gap = max(2, base_font_size // 6)
-    entry_gap = base_font_size // 2  # space between consecutive planets
-    planets_cells = []               # (planet, tag, tag_w, tag_h)
-    for planet, tag in planets_entries:
-        tw, th = tsize(tag, detail_font)
-        planets_cells.append((planet, tag, tw, th))
-    planets_w = 0
-    if planets_cells:
-        planets_w = sum(glyph_sz + tag_gap + tw for _p, _t, tw, _th in planets_cells)
-        planets_w += entry_gap * (len(planets_cells) - 1)
-    planets_h = max((max(glyph_sz, th) for _p, _t, _tw, th in planets_cells), default=0)
-
-    # The conjunction is a vector row ([symbol] [symbol] "N°"), measured on its
-    # own since it isn't plain text.
-    conj_glyph = glyph_sz
-    conj_gap = glyph_gap
-    conj_sep_text = f"{conjunction_pair[2]:.0f}°" if conjunction_pair else ""
-    conj_sep_w, conj_sep_h = tsize(conj_sep_text, detail_font) if conjunction_pair else (0, 0)
-    conj_w = (2 * conj_glyph + 2 * conj_gap + conj_sep_w) if conjunction_pair else 0
-    conj_h = max(conj_glyph, conj_sep_h) if conjunction_pair else 0
-
-    # The space column mirrors the middle column's shape: a hero slot on top
-    # (here holding the planets row + conjunction row), then the Kp and flare
-    # bars — so those bars line up with the UV bar below the middle hero — and
-    # finally the solar-cycle line. The hero slot is at least as tall as the
-    # middle column's hero so the bars align across columns.
-    space_hero_content_h = planets_h
-    if planets_cells and conjunction_pair:
-        space_hero_content_h += line_gap + conj_h
-    elif conjunction_pair:
-        space_hero_content_h = conj_h
-    # The space hero occupies the same height as the middle column's hero so
-    # the bars below the two heroes share a baseline. If the planets +
-    # conjunction content is taller than the middle hero, grow BOTH equally so
-    # alignment holds without clipping either column.
-    hero_h = max(hero_h, space_hero_content_h) if show_space else hero_h
+    # Sky strip: a horizontal gradient track with the visible planets as
+    # coloured dots. The largest dot (Venus, prominence 1.0) is sized to the
+    # detail line height; others scale down by prominence. The strip fills the
+    # space hero slot — it does not grow the column (hero height is shared with
+    # the middle column, set below).
+    dot_max_r = max(3, (detail_line_h + 2) // 2) if (show_space and any_planets) else 0
     space_hero_h = hero_h if show_space else 0
 
     # Width is driven by the widest line; give the Kp bar a sensible minimum so
@@ -640,32 +600,42 @@ def build_weather_layout(
         # Hero slot (top): planets row, then the conjunction row, together
         # occupying space_hero_h so the Kp/flare bars below line up with the
         # middle column's UV bar (which sits below an equally tall hero).
-        hy = body_y
-        if planets_cells:
-            entries = []
-            ex = space_x
-            for planet, tag, tw, th in planets_cells:
-                gy = hy + (planets_h - glyph_sz) // 2
-                glyph = PlanetGlyph(planet, ex, gy, glyph_sz)
-                tag_x = ex + glyph_sz + tag_gap
-                tag_y = hy + (planets_h - th) // 2
-                entries.append(PlanetEntry(glyph=glyph,
-                                           tag=TextPiece(tag, tag_x, tag_y)))
-                ex = tag_x + tw + entry_gap
-            space_column.planets = PlanetsRow(entries=entries)
-            hy += planets_h + line_gap
-
-        if conjunction_pair:
-            pa, pb, _sep = conjunction_pair
-            gy = hy + (conj_h - conj_glyph) // 2
-            glyph_a = PlanetGlyph(pa, space_x, gy, conj_glyph)
-            glyph_b = PlanetGlyph(pb, space_x + conj_glyph + conj_gap, gy, conj_glyph)
-            sep_x = space_x + 2 * conj_glyph + 2 * conj_gap
-            sep_y = hy + (conj_h - conj_sep_h) // 2
-            space_column.conjunction = Conjunction(
-                glyph_a=glyph_a, glyph_b=glyph_b,
-                sep=TextPiece(conj_sep_text, sep_x, sep_y),
-            )
+        # Sky strip hero: a gradient track across the column with the visible
+        # planets as coloured dots. Evening planets sit toward the left (dusk),
+        # all-night planets toward the centre, morning planets toward the right
+        # (dawn). Dot radius scales with prominence; a close conjunction shows
+        # as two dots nearly touching.
+        if any_planets:
+            track_h = max(4, detail_line_h // 2)
+            track_cy = body_y + space_hero_h // 2
+            track = (space_x, track_cy - track_h // 2,
+                     space_x + space_w, track_cy + track_h // 2)
+            # Each visibility window owns a horizontal third of the strip; the
+            # planet's longitude within its window maps to a position in that
+            # third (near→far from the Sun spreads them out). A small inset keeps
+            # dots clear of the strip ends.
+            inset = dot_max_r + 2
+            usable = space_w - 2 * inset
+            third = usable / 3.0
+            _WINDOW_SLOT = {"evening": 0, "night": 1, "morning": 2}
+            dots = []
+            for win in _WINDOW_ORDER:
+                members = planets_by_window[win]
+                if not members:
+                    continue
+                slot_x0 = space_x + inset + _WINDOW_SLOT[win] * third
+                n = len(members)
+                for i, planet in enumerate(members):
+                    # Spread members evenly across their third.
+                    frac = (i + 1) / (n + 1)
+                    cx = int(slot_x0 + frac * third)
+                    prom = PLANET_PROMINENCE.get(planet, 0.6)
+                    r = max(2, int(dot_max_r * prom))
+                    dots.append(PlanetDot(
+                        planet=planet, cx=cx, cy=track_cy, radius=r,
+                        color=PLANET_COLORS.get(planet, theme.label_color),
+                    ))
+            space_column.sky = SkyStrip(track=track, dots=dots)
 
         # Kp bar, anchored just below the hero slot using the SAME gap the
         # middle column puts below its hero (left_gap, the justified gap) → the

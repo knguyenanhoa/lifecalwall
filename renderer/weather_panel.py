@@ -26,7 +26,6 @@ from config import Settings, Theme
 from .draw_utils import blend, ramp_color, resolve_font, text_size
 from .icons import (
     draw_moon_phase,
-    draw_planet_symbol,
     draw_rain_pie,
     draw_weather_icon,
 )
@@ -133,6 +132,43 @@ def draw_flare_bar(draw, x, y, width, flare_class, detail_font, theme,
 
 
 # ---------------------------------------------------------------------------
+# Sky strip (night-sky hero for the space column)
+# ---------------------------------------------------------------------------
+
+def _draw_sky_strip(draw, sky, theme) -> None:
+    """
+    Draw the night-sky strip: a horizontal gradient track (dusk at the ends,
+    darkest at the midnight centre) with the planet dots on top. The gradient
+    is a column-by-column blend so it reads as "night" without any text.
+    """
+    x0, y0, x1, y1 = sky.track
+    width = max(1, x1 - x0)
+    # Tones: a dim indigo-ish dusk/dawn at the ends, a near-background midnight
+    # at the centre, all derived from the theme so it fits every palette.
+    end_tone = blend(theme.background, theme.label_color, 0.30)
+    mid_tone = blend(theme.background, theme.label_color, 0.08)
+    for i in range(width):
+        t = i / (width - 1) if width > 1 else 0.0
+        # Distance from centre (0 at ends → 1 at centre), used to dim toward mid.
+        k = 1.0 - abs(t - 0.5) * 2.0
+        col = blend(end_tone, mid_tone, k)
+        draw.line([(x0 + i, y0), (x0 + i, y1)], fill=col, width=1)
+    # Rounded end-caps for a softer strip.
+    r = (y1 - y0) // 2
+    if r > 0:
+        for cxp in (x0 + r, x1 - r):
+            draw.ellipse([cxp - r, y0, cxp + r, y1],
+                         fill=blend(end_tone, mid_tone, 0.0))
+
+    # Planet dots on top, each a filled circle in its colour with a subtle
+    # darker rim so bright dots don't bleed into the track.
+    for d in sky.dots:
+        rim = blend(d.color, theme.background, 0.5)
+        draw.ellipse([d.cx - d.radius, d.cy - d.radius,
+                      d.cx + d.radius, d.cy + d.radius], fill=d.color, outline=rim)
+
+
+# ---------------------------------------------------------------------------
 # Paint pass
 # ---------------------------------------------------------------------------
 
@@ -181,21 +217,10 @@ def _paint_weather(
                            detail_font, theme, center_label=False)
         if sp.solar_cycle is not None:
             _at(sp.solar_cycle, detail_font, bright)
-        # Visible planets: vector symbol + short tag per planet, not names.
-        if sp.planets is not None:
-            for entry in sp.planets.entries:
-                draw_planet_symbol(draw, entry.glyph.planet, entry.glyph.x,
-                                   entry.glyph.y, entry.glyph.size, bright)
-                _at(entry.tag, detail_font, bright)
-        # The conjunction is drawn as two vector planet symbols + a "N°" label,
-        # rather than planet names, to stay compact.
-        if sp.conjunction is not None:
-            cj = sp.conjunction
-            draw_planet_symbol(draw, cj.glyph_a.planet, cj.glyph_a.x,
-                               cj.glyph_a.y, cj.glyph_a.size, bright)
-            draw_planet_symbol(draw, cj.glyph_b.planet, cj.glyph_b.x,
-                               cj.glyph_b.y, cj.glyph_b.size, bright)
-            _at(cj.sep, detail_font, bright)
+        # Sky strip hero: a dusk→midnight→dawn gradient track with the visible
+        # planets as coloured dots.
+        if sp.sky is not None:
+            _draw_sky_strip(draw, sp.sky, theme)
 
     # Hero ---------------------------------------------------------------
     hero = layout.hero

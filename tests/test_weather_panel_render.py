@@ -370,15 +370,18 @@ def test_space_column_includes_solar_and_cycle_and_planets(monkeypatch):
     assert sp.flare_bar is not None and sp.flare_bar.flare_class == "C3.6"
     # Solar-cycle info is a line below the flare bar.
     assert sp.solar_cycle is not None and sp.solar_cycle.text.startswith("Solar cycle")
-    # Planets row present when at least one planet is clear of the Sun. It is
-    # now a vector PlanetsRow (symbols + tags), not a names text line.
+    # Planets are now a night-sky strip: a gradient track with coloured dots.
     # (Astronomy-dependent, so only assert the structure when present.)
-    from renderer.weather_layout import PlanetsRow
-    if sp.planets is not None:
-        assert isinstance(sp.planets, PlanetsRow)
-        assert sp.planets.entries
-        from renderer.icons import PLANET_SYMBOLS
-        assert all(e.glyph.planet in PLANET_SYMBOLS for e in sp.planets.entries)
+    from renderer.weather_layout import SkyStrip
+    from renderer.icons import PLANET_SYMBOLS
+    if sp.sky is not None:
+        assert isinstance(sp.sky, SkyStrip)
+        assert sp.sky.dots  # at least one visible planet placed
+        for dot in sp.sky.dots:
+            assert dot.planet in PLANET_SYMBOLS
+            assert dot.radius > 0
+            tx0, _ty0, tx1, _ty1 = sp.sky.track
+            assert tx0 <= dot.cx <= tx1  # dot sits within the track span
 
     # The space column stacks top→down: Kp bar, flare bar, solar cycle.
     assert sp.kp_bar.y < sp.flare_bar.y < sp.solar_cycle.y
@@ -412,18 +415,15 @@ def test_space_column_omits_flare_bar_without_flare_class(monkeypatch):
 # Conjunction rendered as vector planet symbols (not names)
 # ---------------------------------------------------------------------------
 
-def test_conjunction_uses_vector_glyphs(monkeypatch):
+def test_sky_strip_dots_sized_by_prominence(monkeypatch):
     import astro
-    from renderer.weather_layout import Conjunction, PlanetGlyph, build_weather_layout
-    from renderer.icons import PLANET_SYMBOLS
+    from renderer.weather_layout import build_weather_layout
+    from renderer.weather_panel_text import PLANET_PROMINENCE
 
     monkeypatch.setattr(wl, "format_dates",
                         lambda today: ("Tue, 17 Mar 2026", "29 Jan", 29))
 
-    # 2026-03-17 has a Mercury–Mars conjunction (~3°) in the low-precision model.
     when = datetime(2026, 3, 17, 20, 0)
-    assert astro.planet_conjunctions(when), "expected a conjunction on this date"
-
     rep = _fixed_report()
     rep.kp_index = 6.0
     img = Image.new("RGB", (CANVAS_W, 480), (10, 10, 20))
@@ -435,15 +435,14 @@ def test_conjunction_uses_vector_glyphs(monkeypatch):
         Theme(name="test"), BASE_FONT,
         today=date(2026, 3, 17), now=when,
     )
-    cj = layout.space.conjunction
-    assert isinstance(cj, Conjunction)
-    assert isinstance(cj.glyph_a, PlanetGlyph) and cj.glyph_a.planet in PLANET_SYMBOLS
-    assert isinstance(cj.glyph_b, PlanetGlyph) and cj.glyph_b.planet in PLANET_SYMBOLS
-    # The separation label is a bare "N°", not planet names.
-    assert cj.sep.text.endswith("°")
-    assert not any(p in cj.sep.text for p in PLANET_SYMBOLS)
-    # Second glyph sits to the right of the first; the label right of both.
-    assert cj.glyph_a.x < cj.glyph_b.x < cj.sep.x
+    sky = layout.space.sky
+    assert sky is not None and sky.dots
+    radii = {d.planet: d.radius for d in sky.dots}
+    # A more-prominent planet never renders smaller than a less-prominent one.
+    for a in radii:
+        for b in radii:
+            if PLANET_PROMINENCE[a] > PLANET_PROMINENCE[b]:
+                assert radii[a] >= radii[b]
 
 
 def test_planet_symbols_draw_without_error():
