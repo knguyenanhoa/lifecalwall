@@ -117,8 +117,8 @@ def test_weather_panel_blank_when_no_report(monkeypatch):
 
 # Snapshot digests captured from the pre-refactor implementation. See
 # tests/conftest or the generating command in the PR notes.
-PIE_MODE_DIGEST = "82a96eda3bbb7ade6d017cca75fa980ff634ddaaf49984caf14054231e59adef"
-PCT_MODE_DIGEST = "2321d083fa59749f93dba3451a740003675532d54099e94559cc7c1a80eaebdc"
+PIE_MODE_DIGEST = "f6788862e1c22f11056582aa51f04c5f9c6a695518722bc7dc4d194098d5c4f5"
+PCT_MODE_DIGEST = "a7dc7f5accbc947fae979253d7c35a106e004ae09f1ecc8a351ca20609048ae9"
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +326,7 @@ def test_sun_line_includes_daylight_in_parentheses(monkeypatch):
     )
     # Midday → next event is sunset 18:03; daylight 05:42→18:03 ≈ 12h 21m.
     assert layout.solar is not None
-    assert layout.solar.text == "Sunset: 18:03 (daylight: 12h 21m)"
+    assert layout.solar.text == "Sunset: 18:03 (Ld: 12h 21m)"
 
 
 def test_sun_line_omits_daylight_without_sun_times(monkeypatch):
@@ -373,6 +373,7 @@ def test_space_column_includes_solar_and_cycle_and_planets(monkeypatch):
     assert sp is not None
     # Solar activity is now a flare-class bar, not a text line.
     assert sp.flare_bar is not None and sp.flare_bar.flare_class == "C3.6"
+    # Solar-cycle info is a line below the flare bar.
     assert sp.solar_cycle is not None and sp.solar_cycle.text.startswith("Solar cycle")
     # Planets row present when at least one planet is clear of the Sun. It is
     # now a vector PlanetsRow (symbols + tags), not a names text line.

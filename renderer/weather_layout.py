@@ -300,15 +300,15 @@ def build_weather_layout(
     tz = f"GMT{gmt}" if gmt else ""
     footer_text = "  ·  ".join(t for t in (place, tz) if t)
 
-    # Next sun event, with today's daylight length in parentheses, e.g.
-    # "Sunrise: 05:42 (daylight: 11h 55m)".
+    # Next sun event, with today's length-of-day in parentheses, e.g.
+    # "Sunrise: 05:42 (Ld: 11h 55m)" — Ld = length of day.
     import astro
     solar = next_solar_event(report, now)
     daylen = astro.day_length_text(report.sunrise_today, report.sunset_today)
     if solar:
         solar_text = f"{solar[0]}: {solar[1]}"
         if daylen:
-            solar_text += f" (daylight: {daylen})"
+            solar_text += f" (Ld: {daylen})"
     else:
         solar_text = ""
 
@@ -322,12 +322,14 @@ def build_weather_layout(
     # Kp value (the fetch may have failed or the cache may predate the field).
     kp_value = report.kp_index if report.kp_index is not None else report.kp_forecast_max
     show_space = bool(getattr(settings, "show_space_weather", False)) and kp_value is not None
-    space_heading_text = "Space weather" if show_space else ""
+    # No top heading: the column leads with the Kp bar so it aligns with the
+    # UV bar in the middle column. The solar-cycle line sits below the flare bar.
+    space_heading_text = ""
+    solar_cycle_text = astro.solar_cycle_text(today) if show_space else ""
     # Solar activity as a flare-class bar (A/B/C/M/X), like the UV/Kp bars.
     # Shown only when we actually have a parseable class.
     flare_class = report.flare_class if show_space else None
     show_flare = show_space and parse_flare_class(flare_class) is not None
-    solar_cycle_text = astro.solar_cycle_text(today) if show_space else ""
     # Visible planets as structured (planet, visibility) pairs, drawn with
     # vector symbols + a short tag instead of names (legend in settings).
     _VIS_TAG = {"evening sky": "ev", "morning sky": "mo", "visible all night": "night"}
@@ -397,15 +399,12 @@ def build_weather_layout(
     kp_bar_h = (space_seg_h + 4 + detail_line_h) if show_space else 0
     flare_bar_h = (space_seg_h + 4 + detail_line_h) if show_flare else 0
     space_head_w, space_head_h = tsize(space_heading_text, detail_font) if show_space else (0, 0)
-    # The plain text lines below the bars, in display order, keyed so the paint
-    # pass can place each into the right SpaceColumn slot. (The flare bar sits
-    # between aurora and solar_cycle; it's measured/placed separately.)
+    # Plain text lines below the bars. The solar-cycle line sits under the
+    # flare bar (placed explicitly in the positioning pass below).
     space_lines = []
-    if show_space:
-        for key, txt in (("solar_cycle", solar_cycle_text),):
-            if txt:
-                lw, lh = tsize(txt, detail_font)
-                space_lines.append((key, txt, lw, lh))
+    if show_space and solar_cycle_text:
+        lw, lh = tsize(solar_cycle_text, detail_font)
+        space_lines.append(("solar_cycle", solar_cycle_text, lw, lh))
 
     # Glyph geometry shared by the planets row and the conjunction row. Planet
     # symbols carry fine detail (horns, arrows, hooks), so draw them larger
@@ -437,21 +436,34 @@ def build_weather_layout(
     conj_w = (2 * conj_glyph + 2 * conj_gap + conj_sep_w) if conjunction_pair else 0
     conj_h = max(conj_glyph, conj_sep_h) if conjunction_pair else 0
 
+    # The space column mirrors the middle column's shape: a hero slot on top
+    # (here holding the planets row + conjunction row), then the Kp and flare
+    # bars — so those bars line up with the UV bar below the middle hero — and
+    # finally the solar-cycle line. The hero slot is at least as tall as the
+    # middle column's hero so the bars align across columns.
+    space_hero_content_h = planets_h
+    if planets_cells and conjunction_pair:
+        space_hero_content_h += line_gap + conj_h
+    elif conjunction_pair:
+        space_hero_content_h = conj_h
+    # The space hero occupies the same height as the middle column's hero so
+    # the bars below the two heroes share a baseline. If the planets +
+    # conjunction content is taller than the middle hero, grow BOTH equally so
+    # alignment holds without clipping either column.
+    hero_h = max(hero_h, space_hero_content_h) if show_space else hero_h
+    space_hero_h = hero_h if show_space else 0
+
     # Width is driven by the widest line; give the Kp bar a sensible minimum so
     # its six segments stay legible, matching the UV bar's floor.
     space_lines_w = max((lw for _k, _t, lw, _lh in space_lines), default=0)
     space_w = max(space_head_w, space_lines_w, planets_w, conj_w,
                   base_font_size * 10) if show_space else 0
     if show_space:
-        space_h = space_head_h + line_gap + kp_bar_h
+        space_h = space_hero_h + line_gap + kp_bar_h
         if show_flare:
             space_h += line_gap + flare_bar_h
         for _k, _t, _lw, lh in space_lines:
             space_h += line_gap + lh
-        if planets_cells:
-            space_h += line_gap + planets_h
-        if conjunction_pair:
-            space_h += line_gap + conj_h
     else:
         space_h = 0
 
@@ -582,14 +594,47 @@ def build_weather_layout(
     # ---- Space-weather column (leftmost, optional) --------------------------
     space_column = None
     if show_space:
-        sy = body_y
-        heading = TextPiece(space_heading_text, space_x, sy)
-        sy += space_head_h + line_gap
-        kp_bar = KpBar(x=space_x, y=sy, width=space_w, value=kp_value)
-        sy += kp_bar_h
-        space_column = SpaceColumn(heading=heading, kp_bar=kp_bar)
-        # Text lines keyed by name so we can slot the flare bar between them.
+        heading = TextPiece(space_heading_text, space_x, body_y)
+        space_column = SpaceColumn(heading=heading, kp_bar=None)
         line_by_key = {k: (t, lh) for k, t, _lw, lh in space_lines}
+
+        # Hero slot (top): planets row, then the conjunction row, together
+        # occupying space_hero_h so the Kp/flare bars below line up with the
+        # middle column's UV bar (which sits below an equally tall hero).
+        hy = body_y
+        if planets_cells:
+            entries = []
+            ex = space_x
+            for planet, tag, tw, th in planets_cells:
+                gy = hy + (planets_h - glyph_sz) // 2
+                glyph = PlanetGlyph(planet, ex, gy, glyph_sz)
+                tag_x = ex + glyph_sz + tag_gap
+                tag_y = hy + (planets_h - th) // 2
+                entries.append(PlanetEntry(glyph=glyph,
+                                           tag=TextPiece(tag, tag_x, tag_y)))
+                ex = tag_x + tw + entry_gap
+            space_column.planets = PlanetsRow(entries=entries)
+            hy += planets_h + line_gap
+
+        if conjunction_pair:
+            pa, pb, _sep = conjunction_pair
+            gy = hy + (conj_h - conj_glyph) // 2
+            glyph_a = PlanetGlyph(pa, space_x, gy, conj_glyph)
+            glyph_b = PlanetGlyph(pb, space_x + conj_glyph + conj_gap, gy, conj_glyph)
+            sep_x = space_x + 2 * conj_glyph + 2 * conj_gap
+            sep_y = hy + (conj_h - conj_sep_h) // 2
+            space_column.conjunction = Conjunction(
+                glyph_a=glyph_a, glyph_b=glyph_b,
+                sep=TextPiece(conj_sep_text, sep_x, sep_y),
+            )
+
+        # Kp bar, anchored just below the hero slot using the SAME gap the
+        # middle column puts below its hero (left_gap, the justified gap) → the
+        # Kp bar lines up with the UV bar. When the space hero is exactly
+        # hero_h (the common case) the two bars share a y to the pixel.
+        sy = body_y + space_hero_h + left_gap
+        space_column.kp_bar = KpBar(x=space_x, y=sy, width=space_w, value=kp_value)
+        sy += kp_bar_h
 
         # Solar-activity flare bar (A/B/C/M/X), styled like the Kp bar.
         if show_flare:
@@ -598,42 +643,12 @@ def build_weather_layout(
                                               flare_class=flare_class)
             sy += flare_bar_h
 
-        # Solar-cycle line.
+        # Solar-cycle line, last.
         if "solar_cycle" in line_by_key:
             txt, lh = line_by_key["solar_cycle"]
             sy += line_gap
             space_column.solar_cycle = TextPiece(txt, space_x, sy)
             sy += lh
-
-        # Planets row: [symbol][tag] per visible planet, laid out left→right.
-        if planets_cells:
-            sy += line_gap
-            entries = []
-            ex = space_x
-            for planet, tag, tw, th in planets_cells:
-                gy = sy + (planets_h - glyph_sz) // 2
-                glyph = PlanetGlyph(planet, ex, gy, glyph_sz)
-                tag_x = ex + glyph_sz + tag_gap
-                tag_y = sy + (planets_h - th) // 2
-                entries.append(PlanetEntry(glyph=glyph,
-                                           tag=TextPiece(tag, tag_x, tag_y)))
-                ex = tag_x + tw + entry_gap
-            space_column.planets = PlanetsRow(entries=entries)
-            sy += planets_h
-
-        if conjunction_pair:
-            sy += line_gap
-            pa, pb, _sep = conjunction_pair
-            gy = sy + (conj_h - conj_glyph) // 2
-            glyph_a = PlanetGlyph(pa, space_x, gy, conj_glyph)
-            glyph_b = PlanetGlyph(pb, space_x + conj_glyph + conj_gap, gy, conj_glyph)
-            sep_x = space_x + 2 * conj_glyph + 2 * conj_gap
-            sep_y = sy + (conj_h - conj_sep_h) // 2
-            space_column.conjunction = Conjunction(
-                glyph_a=glyph_a, glyph_b=glyph_b,
-                sep=TextPiece(conj_sep_text, sep_x, sep_y),
-            )
-            sy += conj_h
 
     # ---- Hero ---------------------------------------------------------------
     ly = body_y
