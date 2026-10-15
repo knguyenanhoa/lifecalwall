@@ -274,6 +274,8 @@ class Settings:
     # Space weather column (geomagnetic Kp index + aurora outlook, from NOAA).
     # Draws as an extra column on the left of the weather widget when on.
     show_space_weather: bool = False
+    # Show short planet labels (Me/V/Ma/J/S) under the sky-strip dots.
+    show_planet_labels: bool = False
 
 
 def load_settings() -> Settings:

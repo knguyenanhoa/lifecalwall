@@ -30,6 +30,7 @@ from .draw_utils import resolve_font, text_size
 from .weather_panel_text import (
     PLANET_COLORS,
     PLANET_PROMINENCE,
+    PLANET_SHORT,
     flare_band_index,
     flare_label,
     format_dates,
@@ -184,12 +185,14 @@ class PlanetGlyph:
 
 @dataclass
 class PlanetDot:
-    """A planet as a coloured filled circle on the sky strip."""
+    """A planet as a coloured filled circle on the sky strip, with an optional
+    short label (e.g. "Me") positioned beneath it."""
     planet: str
     cx: int
     cy: int
     radius: int
     color: Tuple[int, int, int]
+    label: Optional["TextPiece"] = None
 
 
 @dataclass
@@ -606,8 +609,16 @@ def build_weather_layout(
         # (dawn). Dot radius scales with prominence; a close conjunction shows
         # as two dots nearly touching.
         if any_planets:
+            show_labels = bool(getattr(settings, "show_planet_labels", False))
             track_h = max(4, detail_line_h // 2)
-            track_cy = body_y + space_hero_h // 2
+            label_h = detail_line_h if show_labels else 0
+            label_gap = 2 if show_labels else 0
+            # Centre the track in the hero slot, but when labels are shown lift
+            # it so the dot + label pair stays centred within the slot (labels
+            # sit below the dots, inside the existing hero height — no growth).
+            group_h = 2 * dot_max_r + label_gap + label_h
+            group_top = body_y + (space_hero_h - group_h) // 2
+            track_cy = group_top + dot_max_r
             track = (space_x, track_cy - track_h // 2,
                      space_x + space_w, track_cy + track_h // 2)
             # Each visibility window owns a horizontal third of the strip; the
@@ -631,9 +642,17 @@ def build_weather_layout(
                     cx = int(slot_x0 + frac * third)
                     prom = PLANET_PROMINENCE.get(planet, 0.6)
                     r = max(2, int(dot_max_r * prom))
+                    label_piece = None
+                    if show_labels:
+                        short = PLANET_SHORT.get(planet, planet[:2])
+                        lw, lh = tsize(short, detail_font)
+                        label_piece = TextPiece(
+                            short, cx - lw // 2,
+                            track_cy + dot_max_r + label_gap)
                     dots.append(PlanetDot(
                         planet=planet, cx=cx, cy=track_cy, radius=r,
                         color=PLANET_COLORS.get(planet, theme.label_color),
+                        label=label_piece,
                     ))
             space_column.sky = SkyStrip(track=track, dots=dots)
 

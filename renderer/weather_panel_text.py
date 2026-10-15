@@ -192,6 +192,11 @@ PLANET_COLORS = {
 PLANET_PROMINENCE = {
     "Venus": 1.0, "Jupiter": 0.82, "Mars": 0.64, "Saturn": 0.58, "Mercury": 0.5,
 }
+# Short labels for the sky-strip dots. Mercury/Mars need two letters to
+# disambiguate from the single-letter planets.
+PLANET_SHORT = {
+    "Mercury": "Me", "Venus": "V", "Mars": "Ma", "Jupiter": "J", "Saturn": "S",
+}
 
 
 def flare_label(flare_class: Optional[str]) -> str:

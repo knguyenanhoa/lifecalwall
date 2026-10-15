@@ -180,13 +180,22 @@ class SettingsWindow:
             command=self._schedule_preview, **chk_style,
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=2)
 
-        # ---- Weather: space weather toggle ------------------------------
+        # ---- Weather: space weather toggles -----------------------------
+        space_frame = tk.Frame(frm, bg="#1e1e2e")
+        space_frame.grid(row=7, column=0, columnspan=3, sticky="w", pady=2)
         self._show_space_var = tk.BooleanVar(value=self._settings.show_space_weather)
         tk.Checkbutton(
-            frm, text="Show space weather (aurora / Kp)",
+            space_frame, text="Show space weather (aurora / Kp)",
             variable=self._show_space_var,
             command=self._schedule_preview, **chk_style,
-        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=2)
+        ).pack(side="left")
+        self._show_planet_labels_var = tk.BooleanVar(
+            value=self._settings.show_planet_labels)
+        tk.Checkbutton(
+            space_frame, text="Planet labels",
+            variable=self._show_planet_labels_var,
+            command=self._schedule_preview, **chk_style,
+        ).pack(side="left", padx=(12, 0))
 
         # ---- Weather: location ------------------------------------------
         tk.Label(frm, text="Location:", bg="#1e1e2e", fg=LABEL_FG).grid(
@@ -357,6 +366,7 @@ class SettingsWindow:
             show_week_labels=self._show_week_var.get(),
             show_weather=self._show_weather_var.get(),
             show_space_weather=self._show_space_var.get(),
+            show_planet_labels=self._show_planet_labels_var.get(),
             weather_fahrenheit=self._fahrenheit_var.get(),
             weather_location=self._location_var.get().strip(),
             weather_rain_as_pie=self._rain_as_pie_var.get(),

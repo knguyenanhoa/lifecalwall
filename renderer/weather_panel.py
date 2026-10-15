@@ -135,7 +135,7 @@ def draw_flare_bar(draw, x, y, width, flare_class, detail_font, theme,
 # Sky strip (night-sky hero for the space column)
 # ---------------------------------------------------------------------------
 
-def _draw_sky_strip(draw, sky, theme) -> None:
+def _draw_sky_strip(draw, sky, theme, label_font) -> None:
     """
     Draw the night-sky strip: a horizontal gradient track (dusk at the ends,
     darkest at the midnight centre) with the planet dots on top. The gradient
@@ -162,10 +162,14 @@ def _draw_sky_strip(draw, sky, theme) -> None:
 
     # Planet dots on top, each a filled circle in its colour with a subtle
     # darker rim so bright dots don't bleed into the track.
+    label_color = blend(theme.label_color, (255, 255, 255), 0.15)
     for d in sky.dots:
         rim = blend(d.color, theme.background, 0.5)
         draw.ellipse([d.cx - d.radius, d.cy - d.radius,
                       d.cx + d.radius, d.cy + d.radius], fill=d.color, outline=rim)
+        if d.label is not None:
+            draw.text((d.label.x, d.label.y), d.label.text,
+                      fill=label_color, font=label_font)
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +224,7 @@ def _paint_weather(
         # Sky strip hero: a dusk→midnight→dawn gradient track with the visible
         # planets as coloured dots.
         if sp.sky is not None:
-            _draw_sky_strip(draw, sp.sky, theme)
+            _draw_sky_strip(draw, sp.sky, theme, detail_font)
 
     # Hero ---------------------------------------------------------------
     hero = layout.hero
